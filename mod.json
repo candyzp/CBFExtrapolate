@@ -8,10 +8,15 @@
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v1.0.0",
+	"version": "v1.0.1",
 	"developer": "square3ang",
-	"description": "",
-	"dependencies": {
-		"geode.node-ids": ">=v1.23.3"
+	"description": "Extrapolate the frame with CBF",
+	"dependencies": {},
+	"tags": [
+		"gameplay",
+		"enhancement"
+	],
+	"links": {
+		"source": "https://github.com/square3ang/CBFExtrapolate"
 	}
 }
