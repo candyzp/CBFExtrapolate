@@ -6,6 +6,16 @@
 
 using namespace geode::prelude;
 
+static bool g_hasCBF = false;
+
+$on_mod(Loaded) {
+  if (auto cbfMod = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
+    g_hasCBF = !cbfMod->getSettingValue<bool>("soft-toggle");
+    listenForSettingChanges<bool>(
+        "soft-toggle", [](bool value) { g_hasCBF = !value; }, cbfMod);
+  }
+}
+
 struct Click {
   int button;
   bool push;
@@ -102,18 +112,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj)
       origObj = m_objectLayer->getPosition();
 
-    // Since MegaHack has a feature to disable CBF midway, there isn't really
-    // any other way (except memory reading lol).
-    static auto *cbfMod =
-        Loader::get()->getLoadedMod("syzzi.click_between_frames");
-    static bool cachedHasCBF = false;
-    static double lastCheckTime = 0;
-    double now = getCurrentTimestamp();
-    if (now - lastCheckTime > 0.5) {
-      cachedHasCBF = cbfMod && !cbfMod->getSettingValue<bool>("soft-toggle");
-      lastCheckTime = now;
-    }
-    bool hasCBF = cachedHasCBF;
+    bool hasCBF = g_hasCBF;
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
     bool dead = m_playerDied;
 

@@ -8,10 +8,15 @@
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v1.0.2",
+	"version": "v1.0.3",
 	"developer": "square3ang",
 	"description": "Extrapolate the frame with CBF",
-	"dependencies": {},
+	"dependencies": {
+		"syzzi.click_between_frames": {
+			"version": "*",
+			"required": false
+		}
+	},
 	"tags": [
 		"gameplay",
 		"enhancement"
