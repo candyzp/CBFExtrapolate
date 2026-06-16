@@ -10,7 +10,7 @@ Some codes are based on [Click-Between-Frames](https://github.com/theyareonit/Cl
 * Incorporates CBF physics results into the rendering process to minimize visual lag and prevent frame stuttering.
 
 # How is this different from Mega Hack's interpolation?
-* Since Mega Hack's interpolation feature was not designed with CBF in mind, using them together may appear to cause input lag. However, this mod reduces visual latency in high-refresh-rate environments, allowing you to experience more immediate response times.
+* Since Mega Hack's interpolation was not designed with CBF in mind, using them together often causes choppy visuals and an artificial feeling of input lag. In contrast, this mod actively incorporates CBF physics to drastically reduce visual latency in high-refresh-rate environments, delivering a much more immediate and responsive experience.
 
 # Fun Fact
 Actually, CBF isn't required for this mod! You can use it without CBF.

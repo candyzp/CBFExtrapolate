@@ -102,10 +102,18 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj)
       origObj = m_objectLayer->getPosition();
 
-    bool hasCBF = false;
-    if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
-      hasCBF = !m->getSettingValue<bool>("soft-toggle");
+    // Since MegaHack has a feature to disable CBF midway, there isn't really
+    // any other way (except memory reading lol).
+    static auto *cbfMod =
+        Loader::get()->getLoadedMod("syzzi.click_between_frames");
+    static bool cachedHasCBF = false;
+    static double lastCheckTime = 0;
+    double now = getCurrentTimestamp();
+    if (now - lastCheckTime > 0.5) {
+      cachedHasCBF = cbfMod && !cbfMod->getSettingValue<bool>("soft-toggle");
+      lastCheckTime = now;
     }
+    bool hasCBF = cachedHasCBF;
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
     bool dead = m_playerDied;
 
