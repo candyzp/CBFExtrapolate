@@ -1,6 +1,5 @@
 # 1.0.2
-- Extrapolate moving objects & following objects
-- Maybe fix camera jittering
+- optimized
 
 # 1.0.0
 - Initial release
