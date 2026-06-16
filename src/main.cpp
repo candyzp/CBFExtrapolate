@@ -1,11 +1,7 @@
 #include "timestamp.hpp"
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
-#include <Geode/modify/GameObject.hpp>
-#include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 using namespace geode::prelude;
@@ -18,7 +14,6 @@ struct Click {
 
 struct PlayerState {
   CCPoint lastPos = {0, 0};
-  CCPoint prevPos = {0, 0};
   CCPoint lastVel = {0, 0};
   CCPoint prevVel = {0, 0};
   float lastRot = 0;
@@ -39,27 +34,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerState p2;
     CCPoint lastCam = {0, 0};
     CCPoint prevCam = {0, 0};
-    CCPoint prevCam2 = {0, 0};
-    std::vector<std::pair<GameObject *, CCPoint>> movingObjects;
-    std::unordered_set<GameObject *> movingObjectsSet;
-    bool m_inVisit = false;
-
-    struct Mov {
-      CCPoint lastPos = {0, 0};
-      CCPoint corrPos = {0, 0};
-      bool corrX = false;
-      bool corrY = false;
-    };
-    std::unordered_map<GameObject *, Mov> persists;
-
-    ~Fields() {
-      for (auto const &[obj, pos] : movingObjects) {
-        obj->release();
-      }
-      for (auto const &[obj, m] : persists) {
-        obj->release();
-      }
-    }
   };
 
   static void onModify(auto &self) {
@@ -68,12 +42,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void update(float dt) override {
-    for (auto const &[obj, pos] : m_fields->movingObjects) {
-      obj->release();
-    }
-    m_fields->movingObjects.clear();
-    m_fields->movingObjectsSet.clear();
-
     for (const auto &cmd : m_queuedButtons) {
       auto &state = cmd.m_isPlayer2 ? m_fields->p2 : m_fields->p1;
       state.inputs.push_back({.button = static_cast<int>(cmd.m_button),
@@ -84,8 +52,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;
 
+    CCPoint camBefore =
+        m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
     GJBaseGameLayer::update(dt);
 
+    bool ran = false;
     for (int i = 0; i < 2; ++i) {
       auto &state = (i == 0) ? m_fields->p1 : m_fields->p2;
       auto player = (i == 0) ? m_player1 : m_player2;
@@ -94,6 +65,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           state.tickTime = state.lastDt;
           state.prog = 0;
           state.lastSteps = state.steps;
+          ran = true;
         } else {
           if (dt != 0) {
             state.prog += static_cast<double>(dt) * 60;
@@ -102,6 +74,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
         }
       }
     }
+
+    if (ran && m_objectLayer) {
+      m_fields->lastCam = m_objectLayer->getPosition();
+      m_fields->prevCam = camBefore;
+    }
   }
 
   void visit() override {
@@ -109,15 +86,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
       GJBaseGameLayer::visit();
       return;
     }
-
-    bool ran = (m_fields->p1.steps > 0 || m_fields->p2.steps > 0);
-    if (ran && m_objectLayer) {
-      m_fields->prevCam2 = m_fields->prevCam;
-      m_fields->prevCam = m_fields->lastCam;
-      m_fields->lastCam = m_objectLayer->getPosition();
-    }
-
-    m_fields->m_inVisit = true;
 
     CCPoint origP1 = {0, 0};
     CCPoint origP2 = {0, 0};
@@ -134,6 +102,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj)
       origObj = m_objectLayer->getPosition();
 
+    // Since MegaHack has a feature to disable CBF midway, there isn't really
+    // any other way (except memory reading lol).
     static auto *cbfMod =
         Loader::get()->getLoadedMod("syzzi.click_between_frames");
     static bool cachedHasCBF = false;
@@ -265,7 +235,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     if (hasObj && camOff != CCPoint{0, 0}) {
-      m_objectLayer->setPosition(m_fields->lastCam + camOff);
+      m_objectLayer->setPosition(origObj + camOff);
     }
 
     std::vector<std::pair<CCNode *, float>> origGroundX;
@@ -288,131 +258,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
       shiftGround(m_groundLayer2, shift);
     }
 
-    CCPoint dp1_prev = {0, 0};
-    CCPoint dp1_curr = {0, 0};
-    if (hasP1 && m_fields->p1.lastTime != 0) {
-      dp1_prev = m_fields->p1.lastPos - m_fields->p1.prevPos;
-      dp1_curr = m_player1->getPosition() - m_fields->p1.lastPos;
-    }
-
-    CCPoint dp2_prev = {0, 0};
-    CCPoint dp2_curr = {0, 0};
-    if (hasP2 && m_fields->p2.lastTime != 0) {
-      dp2_prev = m_fields->p2.lastPos - m_fields->p2.prevPos;
-      dp2_curr = m_player2->getPosition() - m_fields->p2.lastPos;
-    }
-
-    CCPoint dcam_prev = m_fields->prevCam - m_fields->prevCam2;
-    CCPoint dcam_curr = m_fields->lastCam - m_fields->prevCam;
-
-    auto isCloseTo = [](float val, float target, float eps = 0.02f) {
-      return std::abs(val - target) < eps;
-    };
-
-    auto isValidFollowRatio = [isCloseTo](float ratio) {
-      return isCloseTo(ratio, 1.0f) || isCloseTo(ratio, -1.0f) ||
-             isCloseTo(ratio, 0.5f) || isCloseTo(ratio, -0.5f) ||
-             isCloseTo(ratio, 2.0f) || isCloseTo(ratio, -2.0f);
-    };
-
-    if (dead) {
-      for (auto const &[obj, m] : m_fields->persists) {
-        obj->release();
-      }
-      m_fields->persists.clear();
-    }
-
-    if (ran && !dead && hasP1 && m_fields->p1.lastTime != 0) {
-      std::unordered_set<GameObject *> current;
-      for (auto const &[obj, startPos] : m_fields->movingObjects) {
-        current.insert(obj);
-      }
-
-      for (auto it = m_fields->persists.begin();
-           it != m_fields->persists.end();) {
-        if (current.find(it->first) == current.end()) {
-          it->first->release();
-          it = m_fields->persists.erase(it);
-        } else {
-          ++it;
-        }
-      }
-
-      for (auto const &[obj, startPos] : m_fields->movingObjects) {
-        CCPoint disp = obj->getPosition() - startPos;
-        CCPoint corr = disp;
-        bool cx = false;
-        bool cy = false;
-
-        if (!cx && std::abs(dp1_prev.x) > 0.0001f) {
-          float ratio = disp.x / dp1_prev.x;
-          if (isValidFollowRatio(ratio)) {
-            corr.x = ratio * dp1_curr.x;
-            cx = true;
-          }
-        }
-        if (!cx && std::abs(dp2_prev.x) > 0.0001f) {
-          float ratio = disp.x / dp2_prev.x;
-          if (isValidFollowRatio(ratio)) {
-            corr.x = ratio * dp2_curr.x;
-            cx = true;
-          }
-        }
-        if (!cx && std::abs(dcam_prev.x) > 0.0001f) {
-          float ratio = disp.x / dcam_prev.x;
-          if (isValidFollowRatio(ratio)) {
-            corr.x = ratio * dcam_curr.x;
-            cx = true;
-          }
-        }
-
-        if (!cy && std::abs(dp1_prev.y) > 0.0001f) {
-          float ratio = disp.y / dp1_prev.y;
-          if (isValidFollowRatio(ratio)) {
-            corr.y = ratio * dp1_curr.y;
-            cy = true;
-          }
-        }
-        if (!cy && std::abs(dp2_prev.y) > 0.0001f) {
-          float ratio = disp.y / dp2_prev.y;
-          if (isValidFollowRatio(ratio)) {
-            corr.y = ratio * dp2_curr.y;
-            cy = true;
-          }
-        }
-        if (!cy && std::abs(dcam_prev.y) > 0.0001f) {
-          float ratio = disp.y / dcam_prev.y;
-          if (isValidFollowRatio(ratio)) {
-            corr.y = ratio * dcam_curr.y;
-            cy = true;
-          }
-        }
-
-        auto it = m_fields->persists.find(obj);
-        if (it == m_fields->persists.end()) {
-          obj->retain();
-          m_fields->persists[obj] = {disp, corr, cx, cy};
-        } else {
-          it->second = {disp, corr, cx, cy};
-        }
-      }
-    }
-
-    std::vector<std::pair<GameObject *, CCPoint>> origObjectPositions;
-    if (!dead && hasP1 && m_fields->p1.lastTime != 0) {
-      for (auto const &[obj, move] : m_fields->persists) {
-        float extX =
-            move.corrX ? (move.corrPos.x * (static_cast<float>(camPct) + 1.0f))
-                       : (move.lastPos.x * static_cast<float>(camPct));
-        float extY =
-            move.corrY ? (move.corrPos.y * (static_cast<float>(camPct) + 1.0f))
-                       : (move.lastPos.y * static_cast<float>(camPct));
-
-        origObjectPositions.push_back({obj, obj->getPosition()});
-        obj->setPosition(obj->getPosition() + CCPoint{extX, extY});
-      }
-    }
-
     GJBaseGameLayer::visit();
 
     if (hasP1 && m_fields->p1.lastTime != 0) {
@@ -429,10 +274,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     for (const auto &[node, x] : origGroundX) {
       node->setPositionX(x);
     }
-    for (const auto &[obj, pos] : origObjectPositions) {
-      obj->setPosition(pos);
-    }
-    m_fields->m_inVisit = false;
   }
 };
 
@@ -459,7 +300,6 @@ class $modify(MyPlayer, PlayerObject) {
         state->inputs.clear();
 
         state->prevTime = state->lastTime;
-        state->prevPos = state->lastPos;
         state->lastPos = posBefore;
         state->prevVel = velBefore;
         state->lastRot = rotBefore;
@@ -481,54 +321,5 @@ class $modify(MyPlayer, PlayerObject) {
       state->lastDt += dt;
       state->steps++;
     }
-  }
-};
-
-class $modify(MyGameObject, GameObject) {
-  void registerMovement() {
-    auto gameLayer = GJBaseGameLayer::get();
-    if (!gameLayer)
-      return;
-    if (this == static_cast<GameObject *>(gameLayer->m_player1) ||
-        this == static_cast<GameObject *>(gameLayer->m_player2))
-      return;
-
-    bool isGround = false;
-    CCNode *p = this->getParent();
-    while (p) {
-      if (geode::cast::typeinfo_cast<GJGroundLayer *>(p)) {
-        isGround = true;
-        break;
-      }
-      p = p->getParent();
-    }
-    if (isGround)
-      return;
-
-    auto *myBGL = static_cast<MyBGL *>(gameLayer);
-    if (!myBGL->m_fields->m_inVisit) {
-      if (myBGL->m_fields->movingObjectsSet.find(this) ==
-          myBGL->m_fields->movingObjectsSet.end()) {
-        myBGL->m_fields->movingObjectsSet.insert(this);
-        myBGL->m_fields->movingObjects.push_back({this, this->getPosition()});
-        this->retain();
-      }
-    }
-  }
-
-  void setPosition(CCPoint const &pos) override {
-    registerMovement();
-    GameObject::setPosition(pos);
-  }
-};
-
-class $modify(MyPlayLayer, PlayLayer) {
-  void resetLevel() override {
-    PlayLayer::resetLevel();
-    auto myGL = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this));
-    for (auto const &[obj, m] : myGL->m_fields->persists) {
-      obj->release();
-    }
-    myGL->m_fields->persists.clear();
   }
 };
