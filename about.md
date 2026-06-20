@@ -1,14 +1,12 @@
 # CBF Extrapolate
-Extrapolate the frame with CBF physical reflection.
+Extrapolate the frame with CBF.
 
-Some codes are based on [Click-Between-Frames](https://github.com/theyareonit/Click-Between-Frames).
+Some codes are based on [Click-Between-Frames](https://github.com/theyareonit/Click-Between-Frames) and [Silicate](https://git.silicate.dev/silicate/silicate).
 
-# Features
-* Interpolates between frames to ensure smooth gameplay on high-refresh-rate monitors or when VSync is disabled.
-* Incorporates CBF physics results into the rendering process to minimize visual lag and prevent frame stuttering.
+## What does this mod do?
+This mod is essentially a "Visual-Only Physics Bypass". It has absolutely no effect on in-game hitboxes or physical gameplay; it simply extrapolates the player's position and rotation during rendering to make the movement look smoother.
 
-# How is this different from Mega Hack's interpolation?
-* Since Mega Hack's interpolation was not designed with CBF in mind, using them together often causes choppy visuals and an artificial feeling of input lag. In contrast, this mod actively incorporates CBF physics to drastically reduce visual latency in high-refresh-rate environments, delivering a much more immediate and responsive experience.
+The name "CBF Extrapolate" was chosen mostly to attract interest (as a bit of clickbait). Although it was designed to eliminate micro-stutters and maximize responsiveness when used together with Click-Between-Frames (CBF), CBF is not actually required—the mod functions perfectly fine on its own.
 
-# Fun Fact
-Actually, CBF isn't required for this mod! You can use it without CBF.
+## How is it different from Mega Hack's interpolation?
+Standard frame interpolation, such as Mega Hack's implementation, relies on simple linear extrapolation/interpolation which does not match actual game physics. This mod, however, runs real game physics updates on a fake player object during the rendering phase while incorporating CBF input timestamps. This ensures the visual movement matches actual gameplay physics, significantly reducing perceived latency and input delay.

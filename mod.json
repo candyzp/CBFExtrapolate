@@ -1,20 +1,24 @@
 {
 	"geode": "5.7.1",
 	"gd": {
-		"win": "2.2081",
-		"android": "2.2081",
-		"mac": "2.2081",
-		"ios": "2.2081"
+		"win": "2.2081"
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v1.0.6",
+	"version": "v2.0.0",
 	"developer": "square3ang",
-	"description": "Extrapolate the frame with CBF",
+	"description": "Frame extrapolation for smoother rendering.",
 	"dependencies": {
 		"syzzi.click_between_frames": {
 			"version": ">=v1.0.5",
 			"required": false
+		},
+		"geode.custom-keybinds": {
+			"version": ">=v2.1.0",
+			"required": true,
+			"platforms": [
+				"win"
+			]
 		}
 	},
 	"tags": [

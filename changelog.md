@@ -1,3 +1,6 @@
+# 2.0.0
+- Refactored to mimic actual game physics (Most accurate frame extrapolation ever)
+
 # 1.0.6
 - Added soft-toggle setting
 
