@@ -1,16 +1,16 @@
 #include "timestamp.hpp"
 #include <Geode/Geode.hpp>
+#include <Geode/binding/DashRingObject.hpp>
 #include <Geode/binding/GameManager.hpp>
 #include <Geode/binding/LevelSettingsObject.hpp>
 #include <Geode/binding/PauseLayer.hpp>
 #include <Geode/binding/RingObject.hpp>
-#include <Geode/binding/DashRingObject.hpp>
-#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/EnhancedGameObject.hpp>
-#include <Geode/modify/RingObject.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/HardStreak.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
+#include <Geode/modify/RingObject.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -168,7 +168,8 @@ static LRESULT CALLBACK ExtrapolateWndProc(HWND hwnd, UINT msg, WPARAM wParam,
           bool duplicate = false;
           if (!g_rawInputs.empty()) {
             const auto &last = g_rawInputs.back();
-            if (last.button == button && last.isPush == isPush && last.isPlayer2 == isPlayer2 &&
+            if (last.button == button && last.isPush == isPush &&
+                last.isPlayer2 == isPlayer2 &&
                 std::abs(last.timestamp - timestamp) < 0.005) {
               duplicate = true;
             }
@@ -199,7 +200,8 @@ static LRESULT CALLBACK ExtrapolateWndProc(HWND hwnd, UINT msg, WPARAM wParam,
       bool duplicate = false;
       if (!g_rawInputs.empty()) {
         const auto &last = g_rawInputs.back();
-        if (last.button == button && last.isPush == isPush && last.isPlayer2 == isPlayer2 &&
+        if (last.button == button && last.isPush == isPush &&
+            last.isPlayer2 == isPlayer2 &&
             std::abs(last.timestamp - timestamp) < 0.005) {
           duplicate = true;
         }
@@ -318,7 +320,7 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_playEffects = false;
 }
 
-static bool isFakePlayer(PlayerObject* player);
+static bool isFakePlayer(PlayerObject *player);
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct Fields {
@@ -343,7 +345,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
   static void onModify(auto &self) {
     (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
-    (void)self.setHookPriority("GJBaseGameLayer::updateCamera", Priority::VeryLate);
+    (void)self.setHookPriority("GJBaseGameLayer::updateCamera",
+                               Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::flipGravity",
                                Priority::VeryEarly);
@@ -368,7 +371,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
-    CCPoint camBefore = m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
+    CCPoint camBefore =
+        m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
     GJBaseGameLayer::updateCamera(dt);
     if (m_objectLayer) {
       CCPoint disp = m_objectLayer->getPosition() - camBefore;
@@ -563,7 +567,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         double dtSeconds = tCurrent - state.lastTime;
-        double maxDtSeconds = (state.lastDt > 0.0001f) ? ((state.lastDt / 60.0f) / timeScale) : 0.033;
+        double maxDtSeconds = (state.lastDt > 0.0001f)
+                                  ? ((state.lastDt / 60.0f) / timeScale)
+                                  : 0.033;
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
         }
@@ -639,8 +645,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
           CCPoint camDisp = m_fields->m_lastCamDisp;
           if (maxDtSeconds > 0.0001) {
             camPct = dtSeconds / maxDtSeconds;
-            if (camPct > 1.0) camPct = 1.0;
-            if (camPct < 0.0) camPct = 0.0;
+            if (camPct > 1.0)
+              camPct = 1.0;
+            if (camPct < 0.0)
+              camPct = 0.0;
             camOff = camDisp * static_cast<float>(camPct);
           }
         }
@@ -653,7 +661,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         double dtSeconds = tCurrent - state.lastTime;
-        double maxDtSeconds = (state.lastDt > 0.0001f) ? ((state.lastDt / 60.0f) / timeScale) : 0.033;
+        double maxDtSeconds = (state.lastDt > 0.0001f)
+                                  ? ((state.lastDt / 60.0f) / timeScale)
+                                  : 0.033;
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
         }
@@ -795,12 +805,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 };
 
-static bool isFakePlayer(PlayerObject* player) {
-  if (!player) return false;
+static bool isFakePlayer(PlayerObject *player) {
+  if (!player)
+    return false;
   auto gameLayer = player->m_gameLayer;
-  if (!gameLayer) return false;
-  auto myGL = static_cast<MyBGL*>(gameLayer);
-  return player == myGL->m_fields->m_fakePlayer1 || player == myGL->m_fields->m_fakePlayer2;
+  if (!gameLayer)
+    return false;
+  auto myGL = static_cast<MyBGL *>(gameLayer);
+  return player == myGL->m_fields->m_fakePlayer1 ||
+         player == myGL->m_fields->m_fakePlayer2;
 }
 
 class $modify(MyPlayer, PlayerObject) {
@@ -994,7 +1007,7 @@ class $modify(MyMenuLayer, MenuLayer) {
 };
 
 class $modify(MyEnhancedGameObject, EnhancedGameObject) {
-  void activatedByPlayer(PlayerObject* player) {
+  void activatedByPlayer(PlayerObject *player) {
     if (isFakePlayer(player)) {
       return;
     }
