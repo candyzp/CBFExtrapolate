@@ -7,8 +7,13 @@
 using namespace geode::prelude;
 
 static bool g_hasCBF = false;
+static bool g_softToggle = false;
 
 $on_mod(Loaded) {
+  g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
+  listenForSettingChanges<bool>(
+      "soft-toggle", [](bool value) { g_softToggle = value; });
+
   if (auto cbfMod = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
     g_hasCBF = !cbfMod->getSettingValue<bool>("soft-toggle");
     listenForSettingChanges<bool>(
@@ -53,6 +58,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void update(float dt) override {
+    if (g_softToggle) {
+      GJBaseGameLayer::update(dt);
+      return;
+    }
+
     for (const auto &cmd : m_queuedButtons) {
       auto &state = cmd.m_isPlayer2 ? m_fields->p2 : m_fields->p1;
       state.inputs.push_back({.button = static_cast<int>(cmd.m_button),
@@ -93,7 +103,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void visit() override {
-    if (isFlipping()) {
+    if (g_softToggle || isFlipping()) {
       GJBaseGameLayer::visit();
       return;
     }
@@ -279,6 +289,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
 class $modify(MyPlayer, PlayerObject) {
   void update(float dt) override {
+    if (g_softToggle) {
+      PlayerObject::update(dt);
+      return;
+    }
+
     auto gameLayer = GJBaseGameLayer::get();
     MyBGL *myGL = nullptr;
     PlayerState *state = nullptr;

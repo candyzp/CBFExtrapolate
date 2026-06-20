@@ -8,7 +8,7 @@
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v1.0.5",
+	"version": "v1.0.6",
 	"developer": "square3ang",
 	"description": "Extrapolate the frame with CBF",
 	"dependencies": {
@@ -23,5 +23,13 @@
 	],
 	"links": {
 		"source": "https://github.com/square3ang/CBFExtrapolate"
+	},
+	"settings": {
+		"soft-toggle": {
+			"name": "Soft Toggle",
+			"description": "Disables CBF Extrapolate features.",
+			"type": "bool",
+			"default": false
+		}
 	}
 }
