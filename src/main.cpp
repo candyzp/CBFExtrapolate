@@ -44,6 +44,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerState p2;
     CCPoint lastCam = {0, 0};
     CCPoint prevCam = {0, 0};
+    std::vector<std::pair<CCNode *, float>> origGroundX;
   };
 
   static void onModify(auto &self) {
@@ -144,7 +145,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
             if (tRel > state.lastDt)
               tRel = state.lastDt;
 
-            double clkPct = tRel / state.lastDt;
+            double clkPct = (state.lastDt > 0.0) ? (tRel / state.lastDt) : 0.0;
             if (pct < clkPct) {
               clickOffs.x -= dx * (state.lastDt - tRel) * pct * 60;
               clickOffs.y -= dy * (state.lastDt - tRel) * pct * 60;
@@ -203,7 +204,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
             if (tRel > state.lastDt)
               tRel = state.lastDt;
 
-            double clkPct = tRel / state.lastDt;
+            double clkPct = (state.lastDt > 0.0) ? (tRel / state.lastDt) : 0.0;
             if (pct < clkPct) {
               clickOffs.x -= dx * (state.lastDt - tRel) * pct * 60;
               clickOffs.y -= dy * (state.lastDt - tRel) * pct * 60;
@@ -237,13 +238,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_objectLayer->setPosition(origObj + camOff);
     }
 
-    std::vector<std::pair<CCNode *, float>> origGroundX;
+    m_fields->origGroundX.clear();
     auto shiftGround = [&](GJGroundLayer *ground, float shift) {
       if (!ground)
         return;
       for (auto *child : CCArrayExt<CCNode *>(ground->getChildren())) {
         if (geode::cast::typeinfo_cast<CCSpriteBatchNode *>(child)) {
-          origGroundX.push_back({child, child->getPositionX()});
+          m_fields->origGroundX.push_back({child, child->getPositionX()});
           child->setPositionX(child->getPositionX() + shift);
         }
       }
@@ -270,7 +271,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj && camOff != CCPoint{0, 0}) {
       m_objectLayer->setPosition(origObj);
     }
-    for (const auto &[node, x] : origGroundX) {
+    for (const auto &[node, x] : m_fields->origGroundX) {
       node->setPositionX(x);
     }
   }
@@ -295,7 +296,7 @@ class $modify(MyPlayer, PlayerObject) {
 
     if (state) {
       if (state->steps == 0) {
-        state->physInputs = std::move(state->inputs);
+        state->physInputs = state->inputs;
         state->inputs.clear();
 
         state->prevTime = state->lastTime;
