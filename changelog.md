@@ -1,3 +1,7 @@
+# 2.0.8
+- changed fake player's parent to 'this'
+- blocked extrapolation in editor
+
 # 2.0.7
 - Fixed the issue where the object activation state was determined by the fake player.
 
