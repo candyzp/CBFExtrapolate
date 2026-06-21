@@ -469,21 +469,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-          float rotSpeed = 0.0f;
-          if (state.lastDt > 0) {
-            float rDisp = origR1 - state.lastRot;
-            if (rDisp > 180)
-              rDisp -= 360;
-            if (rDisp < -180)
-              rDisp += 360;
-            rotSpeed = rDisp / state.lastDt;
-          }
-          float dtFrames = static_cast<float>(dtSeconds) * 60.0f;
-          float rot = origR1 + rotSpeed * dtFrames;
-
           m_player1->CCNode::setPosition(
               m_fields->m_fakePlayer1->getPosition());
-          m_player1->setRotation(rot);
+          m_player1->setRotation(m_fields->m_fakePlayer1->getRotation());
 
           CCPoint camDisp = m_fields->lastCam - m_fields->prevCam;
           if (maxDtSeconds > 0.0001) {
@@ -543,21 +531,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-          float rotSpeed = 0.0f;
-          if (state.lastDt > 0) {
-            float rDisp = origR2 - state.lastRot;
-            if (rDisp > 180)
-              rDisp -= 360;
-            if (rDisp < -180)
-              rDisp += 360;
-            rotSpeed = rDisp / state.lastDt;
-          }
-          float dtFrames = static_cast<float>(dtSeconds) * 60.0f;
-          float rot = origR2 + rotSpeed * dtFrames;
-
           m_player2->CCNode::setPosition(
               m_fields->m_fakePlayer2->getPosition());
-          m_player2->setRotation(rot);
+          m_player2->setRotation(m_fields->m_fakePlayer2->getRotation());
         }
       }
     }
