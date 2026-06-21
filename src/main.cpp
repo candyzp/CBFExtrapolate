@@ -40,27 +40,12 @@ $on_mod(Loaded) {
 }
 
 static void extrapolatePushButton(PlayerObject *player, PlayerButton button) {
-  player->m_holdingButtons[static_cast<int>(button)] = true;
-  if (button == PlayerButton::Jump) {
-    player->m_jumpBuffered = true;
-    player->m_hasEverJumped = true;
-  } else if (button == PlayerButton::Left) {
-    player->m_holdingLeft = true;
-  } else if (button == PlayerButton::Right) {
-    player->m_holdingRight = true;
-  }
+  player->pushButton(button);
 }
 
 static void extrapolateReleaseButton(PlayerObject *player,
                                      PlayerButton button) {
-  player->m_holdingButtons[static_cast<int>(button)] = false;
-  if (button == PlayerButton::Jump) {
-    player->m_jumpBuffered = false;
-  } else if (button == PlayerButton::Left) {
-    player->m_holdingLeft = false;
-  } else if (button == PlayerButton::Right) {
-    player->m_holdingRight = false;
-  }
+  player->releaseButton(button);
 }
 
 struct PlayerState {
@@ -133,6 +118,10 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
       fake->m_touchingRings->addObject(real->m_touchingRings->objectAtIndex(i));
     }
   }
+  fake->m_touchedRing = real->m_touchedRing;
+  fake->m_touchedCustomRing = real->m_touchedCustomRing;
+  fake->m_touchedGravityPortal = real->m_touchedGravityPortal;
+  fake->m_ringRelatedSet = real->m_ringRelatedSet;
   fake->m_lastActivatedPortal = real->m_lastActivatedPortal;
 
   fake->m_holdingLeft = real->m_holdingLeft;
@@ -170,9 +159,21 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     ~Fields() {
       if (m_fakePlayer1) {
+        if (Bot::get()->trajectory().m_fakePlayer1 == m_fakePlayer1) {
+          Bot::get()->trajectory().m_fakePlayer1 = nullptr;
+        }
+        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 == m_fakePlayer1) {
+          Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = nullptr;
+        }
         m_fakePlayer1->release();
       }
       if (m_fakePlayer2) {
+        if (Bot::get()->trajectory().m_fakePlayer2 == m_fakePlayer2) {
+          Bot::get()->trajectory().m_fakePlayer2 = nullptr;
+        }
+        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 == m_fakePlayer2) {
+          Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = nullptr;
+        }
         m_fakePlayer2->release();
       }
     }
@@ -303,6 +304,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
           m_fields->m_fakePlayer1 = createFakePlayer(false);
         }
+        Bot::get()->trajectory().m_fakePlayer1 = m_fields->m_fakePlayer1;
+        Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = m_fields->m_fakePlayer1;
       }
       if (hasP2) {
         if (!m_fields->m_fakePlayer2 ||
@@ -313,8 +316,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
           m_fields->m_fakePlayer2 = createFakePlayer(true);
         }
+        Bot::get()->trajectory().m_fakePlayer2 = m_fields->m_fakePlayer2;
+        Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = m_fields->m_fakePlayer2;
       }
     }
+    Bot::get()->trajectory().deactivateAllRemembered();
 
     CCPoint origP1 = {0, 0};
     float origR1 = 0.0f;

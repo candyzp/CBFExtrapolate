@@ -1,3 +1,6 @@
+# 2.0.6
+- added simulation for orbs, gravity portals, etc.
+
 # 2.0.5
 - fixed an issue where P2 was simulated when not in Dual Mode
 - fixed an issue in MegaHack where fakeplayer was judged to be dead and hitboxes were displayed (probably)
