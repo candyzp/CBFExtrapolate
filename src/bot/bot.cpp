@@ -1,6 +1,6 @@
 #include "bot.hpp"
-#include "../trajectory/trajectory.hpp"
 #include "../physics/object.hpp"
+#include "../trajectory/trajectory.hpp"
 #include <Geode/Geode.hpp>
 
 using namespace geode::prelude;
@@ -24,7 +24,8 @@ PlayerObject *Trajectory::getOtherPlayer(PlayerObject *player) {
   return nullptr;
 }
 
-void Trajectory::rememberActivatedObject(cocos2d::CCObject *obj, PlayerObject *player) {
+void Trajectory::rememberActivatedObject(cocos2d::CCObject *obj,
+                                         PlayerObject *player) {
   if (player == m_fakePlayer1) {
     m_activatedObjectsP1.insert(reinterpret_cast<uintptr_t>(obj));
   } else if (player == m_fakePlayer2) {
@@ -32,7 +33,8 @@ void Trajectory::rememberActivatedObject(cocos2d::CCObject *obj, PlayerObject *p
   }
 }
 
-bool Trajectory::playerHasActivated(PlayerObject *player, cocos2d::CCObject *obj) {
+bool Trajectory::playerHasActivated(PlayerObject *player,
+                                    cocos2d::CCObject *obj) {
   if (!obj)
     return false;
   auto effectObj = geode::cast::typeinfo_cast<EffectGameObject *>(obj);
@@ -47,7 +49,8 @@ bool Trajectory::playerHasActivated(PlayerObject *player, cocos2d::CCObject *obj
   return false;
 }
 
-bool Trajectory::realPlayerHasActivated(PlayerObject *player, cocos2d::CCObject *obj) {
+bool Trajectory::realPlayerHasActivated(PlayerObject *player,
+                                        cocos2d::CCObject *obj) {
   if (!obj)
     return false;
   auto effectObj = geode::cast::typeinfo_cast<EnhancedGameObject *>(obj);
@@ -62,7 +65,8 @@ bool Trajectory::realPlayerHasActivated(PlayerObject *player, cocos2d::CCObject 
     return phys::hasBeenActivatedByPlayer(player, effectObj);
   }
 
-  PlayerObject *realPlayer = (player == m_fakePlayer1) ? pl->m_player1 : pl->m_player2;
+  PlayerObject *realPlayer =
+      (player == m_fakePlayer1) ? pl->m_player1 : pl->m_player2;
   if (!realPlayer)
     return false;
 

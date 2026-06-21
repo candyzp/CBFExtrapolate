@@ -162,7 +162,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (Bot::get()->trajectory().m_fakePlayer1 == m_fakePlayer1) {
           Bot::get()->trajectory().m_fakePlayer1 = nullptr;
         }
-        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 == m_fakePlayer1) {
+        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 ==
+            m_fakePlayer1) {
           Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = nullptr;
         }
         m_fakePlayer1->release();
@@ -171,7 +172,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (Bot::get()->trajectory().m_fakePlayer2 == m_fakePlayer2) {
           Bot::get()->trajectory().m_fakePlayer2 = nullptr;
         }
-        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 == m_fakePlayer2) {
+        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 ==
+            m_fakePlayer2) {
           Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = nullptr;
         }
         m_fakePlayer2->release();
@@ -305,7 +307,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           m_fields->m_fakePlayer1 = createFakePlayer(false);
         }
         Bot::get()->trajectory().m_fakePlayer1 = m_fields->m_fakePlayer1;
-        Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = m_fields->m_fakePlayer1;
+        Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 =
+            m_fields->m_fakePlayer1;
       }
       if (hasP2) {
         if (!m_fields->m_fakePlayer2 ||
@@ -317,7 +320,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           m_fields->m_fakePlayer2 = createFakePlayer(true);
         }
         Bot::get()->trajectory().m_fakePlayer2 = m_fields->m_fakePlayer2;
-        Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = m_fields->m_fakePlayer2;
+        Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 =
+            m_fields->m_fakePlayer2;
       }
     }
     Bot::get()->trajectory().deactivateAllRemembered();
@@ -744,7 +748,8 @@ class $modify(MyPlayer, PlayerObject) {
 class $modify(MyPlayLayer, PlayLayer) {
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayLayer::init", Priority::VeryEarly);
-    (void)self.setHookPriorityPre("PlayLayer::destroyPlayer", Priority::First - 100);
+    (void)self.setHookPriorityPre("PlayLayer::destroyPlayer",
+                                  Priority::First - 100);
     (void)self.setHookPriority("PlayLayer::resetLevel", Priority::VeryEarly);
     (void)self.setHookPriority("PlayLayer::resetLevelFromStart",
                                Priority::VeryEarly);
