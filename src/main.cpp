@@ -419,7 +419,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
             updatePlayerSubstepped(dtFrames);
           }
 
-          player->m_isDead = state.isDead;
+          player->m_isDead = false;
 
           g_extrapolating = false;
         };
@@ -487,7 +487,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
-    if (hasP2 && m_fields->m_fakePlayer2) {
+    if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
       auto &state = m_fields->p2;
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
