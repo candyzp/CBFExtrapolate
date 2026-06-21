@@ -3,7 +3,6 @@
 #include <Geode/Geode.hpp>
 
 #include "bot/bot.hpp"
-#include "replay/system.hpp"
 #include "trajectory/trajectory.hpp"
 
 using namespace geode::prelude;

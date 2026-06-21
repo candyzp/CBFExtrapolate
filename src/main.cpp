@@ -827,3 +827,14 @@ class $modify(MyRingObject, RingObject) {
     RingObject::spawnCircle();
   }
 };
+
+class $modify(MyEnhancedGameObject, EnhancedGameObject) {
+  void activatedByPlayer(PlayerObject *player) {
+    if (isFakePlayer(player)) {
+      phys::activateForTrajectory(reinterpret_cast<EffectGameObject *>(this),
+                                  player);
+    } else {
+      EnhancedGameObject::activatedByPlayer(player);
+    }
+  }
+};

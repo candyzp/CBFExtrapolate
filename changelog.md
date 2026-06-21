@@ -1,3 +1,6 @@
+# 2.0.7
+- Fixed the issue where the object activation state was determined by the fake player.
+
 # 2.0.6
 - added simulation for orbs, gravity portals, etc.
 
