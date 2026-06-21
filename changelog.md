@@ -1,3 +1,6 @@
+# 2.0.1
+- Changed to use Silicate's physics simulation logic (to avoid affecting actual game physics)
+
 # 2.0.0
 - Refactored to mimic actual game physics (Most accurate frame extrapolation ever)
 
