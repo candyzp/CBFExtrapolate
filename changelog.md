@@ -1,3 +1,6 @@
+# 2.0.9
+- Added cheat tags because it could be considered a cheat on leaderboards or forums.
+
 # 2.0.8
 - changed fake player's parent to 'this'
 - blocked extrapolation in editor

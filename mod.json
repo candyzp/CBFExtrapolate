@@ -8,7 +8,7 @@
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v2.0.8",
+	"version": "v2.0.9",
 	"developer": "square3ang",
 	"description": "Frame extrapolation for smoother rendering.",
 	"dependencies": {
@@ -19,7 +19,8 @@
 	},
 	"tags": [
 		"gameplay",
-		"enhancement"
+		"enhancement",
+		"cheat"
 	],
 	"links": {
 		"source": "https://github.com/square3ang/CBFExtrapolate"
