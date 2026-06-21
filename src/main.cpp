@@ -1,4 +1,9 @@
+#include "bot/bot.hpp"
+#include "physics/collisions.hpp"
+#include "physics/gjbasegamelayer.hpp"
+#include "physics/player.hpp"
 #include "timestamp.hpp"
+#include "trajectory/trajectory.hpp"
 #include <Geode/Geode.hpp>
 #include <Geode/binding/DashRingObject.hpp>
 #include <Geode/binding/GameManager.hpp>
@@ -299,6 +304,27 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_lastGroundObject = real->m_lastGroundObject;
   fake->m_preLastGroundObject = real->m_preLastGroundObject;
   fake->m_maybeLastGroundObject = real->m_maybeLastGroundObject;
+  fake->m_collidingWithSlopeId = real->m_collidingWithSlopeId;
+  fake->m_slopeFlipGravityRelated = real->m_slopeFlipGravityRelated;
+  fake->m_potentialSlopeMap = real->m_potentialSlopeMap;
+
+  fake->m_lastCollisionBottom = real->m_lastCollisionBottom;
+  fake->m_lastCollisionTop = real->m_lastCollisionTop;
+  fake->m_lastCollisionLeft = real->m_lastCollisionLeft;
+  fake->m_lastCollisionRight = real->m_lastCollisionRight;
+  fake->m_collidedTopMinY = real->m_collidedTopMinY;
+  fake->m_collidedBottomMaxY = real->m_collidedBottomMaxY;
+  fake->m_collidedLeftMaxX = real->m_collidedLeftMaxX;
+  fake->m_collidedRightMinX = real->m_collidedRightMinX;
+
+  fake->m_touchedRings = real->m_touchedRings;
+  if (fake->m_touchingRings && real->m_touchingRings) {
+    fake->m_touchingRings->removeAllObjects();
+    for (unsigned int i = 0; i < real->m_touchingRings->count(); i++) {
+      fake->m_touchingRings->addObject(real->m_touchingRings->objectAtIndex(i));
+    }
+  }
+  fake->m_lastActivatedPortal = real->m_lastActivatedPortal;
 
   fake->m_holdingLeft = real->m_holdingLeft;
   fake->m_holdingRight = real->m_holdingRight;
@@ -309,6 +335,7 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_isDashing = real->m_isDashing;
   fake->m_isDead = real->m_isDead;
   fake->m_inputsLocked = real->m_inputsLocked;
+  fake->m_totalTime = real->m_totalTime;
 
   fake->m_isShip = real->m_isShip;
   fake->m_isBird = real->m_isBird;
@@ -350,14 +377,36 @@ class $modify(MyBGL, GJBaseGameLayer) {
     (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::flipGravity",
                                Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::teleportPlayer",
+                               Priority::VeryEarly);
   }
 
-  void flipGravity(PlayerObject *player, bool flip, bool noEffects) {
+  void flipGravity(PlayerObject *player, bool gravity, bool unk) {
     if (isFakePlayer(player)) {
-      GJBaseGameLayer::flipGravity(player, flip, true);
-      return;
+      phys::flipGravity(player, gravity);
+    } else {
+      GJBaseGameLayer::flipGravity(player, gravity, unk);
     }
-    GJBaseGameLayer::flipGravity(player, flip, noEffects);
+  }
+
+  void teleportPlayer(TeleportPortalObject *obj, PlayerObject *player) {
+    if (isFakePlayer(player)) {
+      phys::teleportPlayer(this, obj, player);
+    } else {
+      GJBaseGameLayer::teleportPlayer(obj, player);
+    }
+  }
+
+  void collisionCheckObjects(PlayerObject *player,
+                             gd::vector<GameObject *> *objects, int length,
+                             float dt) {
+    if (isFakePlayer(player)) {
+      phys::collisionCheckObjects(this, player, objects, length, dt);
+    } else {
+      GJBaseGameLayer::collisionCheckObjects(player, objects, length, dt);
+    }
   }
 
   void updateCamera(float dt) {
@@ -518,13 +567,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
             double stepSize = 0.25;
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
-              player->update(static_cast<float>(currentStep));
+              float delta = static_cast<float>(currentStep);
 
-              float collisionDt = static_cast<float>(currentStep);
-              if (!player->m_isOnSlope || player->m_isDart) {
-                collisionDt = 0.0f;
-              }
-              this->checkCollisions(player, collisionDt, true);
+              player->m_playEffects = false;
+              player->update(delta);
+
+              player->m_unkUnused3 = player->getRotation();
+              player->updateRotation(delta);
+              player->m_shipRotation = player->getPosition();
+
+              this->checkCollisions(player, delta, false);
+
+              phys::checkSpawnObjects(this, player);
+              this->m_effectManager->postCollisionCheck();
 
               player->m_isDead = false;
 
@@ -806,46 +861,74 @@ class $modify(MyBGL, GJBaseGameLayer) {
 };
 
 static bool isFakePlayer(PlayerObject *player) {
-  if (!player)
-    return false;
-  auto gameLayer = player->m_gameLayer;
-  if (!gameLayer)
-    return false;
-  auto myGL = static_cast<MyBGL *>(gameLayer);
-  return player == myGL->m_fields->m_fakePlayer1 ||
-         player == myGL->m_fields->m_fakePlayer2;
+  return Bot::get()->trajectory().isFakePlayer(player);
 }
 
 class $modify(MyPlayer, PlayerObject) {
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayerObject::update", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayerObject::collidedWithObject",
-                               Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::playerDestroyed",
                                Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::ringJump", Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::bumpPlayer", Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::propellPlayer",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::startDashing",
+                               Priority::VeryEarly);
+#ifdef GEODE_IS_WINDOWS
+    (void)self.setHookPriority("PlayerObject::stopDashing",
+                               Priority::VeryEarly);
+#endif
   }
+
+  void ringJump(RingObject *ring, bool unk) {
+    if (isFakePlayer(this)) {
+      phys::ringJump(this, ring);
+    } else {
+      PlayerObject::ringJump(ring, unk);
+    }
+  }
+
+  void bumpPlayer(float force, int objectType, bool playEffect,
+                  GameObject *object) {
+    if (isFakePlayer(this)) {
+      phys::bumpPlayer(this, force, objectType, playEffect, object);
+    } else {
+      PlayerObject::bumpPlayer(force, objectType, playEffect, object);
+    }
+  }
+
+  void propellPlayer(float force, bool dontPlayEffect, int objectType) {
+    if (isFakePlayer(this)) {
+      phys::propellPlayer(this, force, dontPlayEffect, objectType);
+    } else {
+      PlayerObject::propellPlayer(force, dontPlayEffect, objectType);
+    }
+  }
+
+  void startDashing(DashRingObject *obj) {
+    if (isFakePlayer(this)) {
+      phys::startDashing(this, obj);
+    } else {
+      PlayerObject::startDashing(obj);
+    }
+  }
+
+#ifdef GEODE_IS_WINDOWS
+  void stopDashing() {
+    if (isFakePlayer(this)) {
+      phys::stopDashing(this);
+    } else {
+      PlayerObject::stopDashing();
+    }
+  }
+#endif
 
   void playerDestroyed(bool noEffects) {
     if (isFakePlayer(this)) {
       return;
     }
     PlayerObject::playerDestroyed(noEffects);
-  }
-
-  bool collidedWithObject(float dt, GameObject *object, cocos2d::CCRect rect,
-                          bool skipCheck) {
-    if (isFakePlayer(this)) {
-      if (object) {
-        auto type = object->getType();
-        if (type == GameObjectType::Solid || type == GameObjectType::Slope ||
-            type == GameObjectType::Breakable ||
-            type == GameObjectType::CollisionObject) {
-          return PlayerObject::collidedWithObject(dt, object, rect, skipCheck);
-        }
-      }
-      return false;
-    }
-    return PlayerObject::collidedWithObject(dt, object, rect, skipCheck);
   }
 
   void update(float dt) override {
@@ -955,7 +1038,7 @@ class $modify(MyPlayLayer, PlayLayer) {
   }
 
   void destroyPlayer(PlayerObject *player, GameObject *object) override {
-    if (g_extrapolating) {
+    if (g_extrapolating || isFakePlayer(player)) {
       return;
     }
     PlayLayer::destroyPlayer(player, object);
@@ -1003,15 +1086,6 @@ class $modify(MyMenuLayer, MenuLayer) {
 #endif
 
     return true;
-  }
-};
-
-class $modify(MyEnhancedGameObject, EnhancedGameObject) {
-  void activatedByPlayer(PlayerObject *player) {
-    if (isFakePlayer(player)) {
-      return;
-    }
-    EnhancedGameObject::activatedByPlayer(player);
   }
 };
 
