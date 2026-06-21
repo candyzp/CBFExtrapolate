@@ -1,3 +1,7 @@
+# 2.0.3
+- Support cross-platform
+- Better rotation extrapolation
+
 # 2.0.2
 - Solved the problem where simulations affected actual physics.
 - Fixed the issue where fake player death triggered MegaHack's death detector.

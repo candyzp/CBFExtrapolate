@@ -441,7 +441,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (dtSeconds > 0.0 && dtSeconds < 2.0) {
           std::vector<PlayerButtonCommand> pendingClicks;
           if (hasCBF) {
-            bool isTwoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
+            bool isTwoPlayer =
+                m_levelSettings && m_levelSettings->m_twoPlayerMode;
             for (const auto &cmd : m_queuedButtons) {
               bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
               if (isTarget && cmd.m_timestamp > state.lastTime &&
@@ -503,7 +504,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (dtSeconds > 0.0 && dtSeconds < 2.0) {
           std::vector<PlayerButtonCommand> pendingClicks;
           if (hasCBF) {
-            bool isTwoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
+            bool isTwoPlayer =
+                m_levelSettings && m_levelSettings->m_twoPlayerMode;
             for (const auto &cmd : m_queuedButtons) {
               bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
               if (isTarget && cmd.m_timestamp > state.lastTime &&
@@ -729,8 +731,6 @@ class $modify(MyPlayer, PlayerObject) {
                                static_cast<float>(this->m_yVelocity));
       state->lastDt += dt;
       state->steps++;
-
-
     }
   }
 };
@@ -807,8 +807,6 @@ class $modify(MyPlayLayer, PlayLayer) {
     resetExtrapolation();
   }
 };
-
-
 
 class $modify(MyRingObject, RingObject) {
   void spawnCircle() {
