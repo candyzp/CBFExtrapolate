@@ -219,7 +219,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void update(float dt) override {
-    if (g_softToggle) {
+    auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
+    if (g_softToggle || !playLayer) {
       GJBaseGameLayer::update(dt);
       return;
     }
@@ -254,26 +255,28 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   PlayerObject *createFakePlayer(bool isPlayer2) {
-    auto player = PlayerObject::create(1, 1, this, m_objectLayer, true);
+    auto player = PlayerObject::create(1, 1, this, this, true);
     if (player) {
       player->retain();
       player->setVisible(false);
       player->m_isSecondPlayer = isPlayer2;
       player->m_playEffects = false;
-      m_objectLayer->addChild(player);
+      this->addChild(player);
     }
     return player;
   }
 
   void visit() override {
-    bool paused = false;
     auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
-    if (playLayer) {
-      paused = playLayer->getChildByType<PauseLayer>(0) != nullptr ||
-               CCDirector::sharedDirector()
-                       ->getRunningScene()
-                       ->getChildByType<PauseLayer>(0) != nullptr;
+    if (!playLayer) {
+      GJBaseGameLayer::visit();
+      return;
     }
+
+    bool paused = playLayer->getChildByType<PauseLayer>(0) != nullptr ||
+                  CCDirector::sharedDirector()
+                          ->getRunningScene()
+                          ->getChildByType<PauseLayer>(0) != nullptr;
 
     if (g_softToggle || isFlipping() || paused) {
       GJBaseGameLayer::visit();
@@ -299,7 +302,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (m_objectLayer) {
       if (hasP1) {
         if (!m_fields->m_fakePlayer1 ||
-            m_fields->m_fakePlayer1->getParent() != m_objectLayer) {
+            m_fields->m_fakePlayer1->getParent() != this) {
           if (m_fields->m_fakePlayer1) {
             m_fields->m_fakePlayer1->release();
             m_fields->m_fakePlayer1 = nullptr;
@@ -312,7 +315,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
       if (hasP2) {
         if (!m_fields->m_fakePlayer2 ||
-            m_fields->m_fakePlayer2->getParent() != m_objectLayer) {
+            m_fields->m_fakePlayer2->getParent() != this) {
           if (m_fields->m_fakePlayer2) {
             m_fields->m_fakePlayer2->release();
             m_fields->m_fakePlayer2 = nullptr;
@@ -700,7 +703,7 @@ class $modify(MyPlayer, PlayerObject) {
 
     auto gameLayer = this->m_gameLayer;
     MyBGL *myGL = nullptr;
-    if (gameLayer) {
+    if (gameLayer && geode::cast::typeinfo_cast<PlayLayer *>(gameLayer)) {
       myGL = static_cast<MyBGL *>(gameLayer);
     }
 
