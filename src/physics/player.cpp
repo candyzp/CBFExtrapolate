@@ -201,7 +201,7 @@ void ringJump(PlayerObject *player, RingObject *ring) {
   if (!ring)
     return;
 
-  if (player->m_ringRelatedSet.contains(ring->m_uniqueID))
+  if (player->m_ringRelatedSet.count(ring->m_uniqueID))
     return;
 
   bool isCustomOrTeleportRing =

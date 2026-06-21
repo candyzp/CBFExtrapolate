@@ -573,7 +573,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
         ForceBlockGameObject *forceBlock = (ForceBlockGameObject *)object;
         int forceID = forceBlock->m_forceID;
         if (forceID > 0) {
-          if (player->m_jumpPadRelated.contains(forceID)) {
+          if (player->m_jumpPadRelated.count(forceID)) {
             if (player->m_jumpPadRelated.at(forceID)) {
               break;
             }
