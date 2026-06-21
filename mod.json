@@ -8,7 +8,7 @@
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v2.0.6",
+	"version": "v2.0.7",
 	"developer": "square3ang",
 	"description": "Frame extrapolation for smoother rendering.",
 	"dependencies": {
