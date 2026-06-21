@@ -1,3 +1,6 @@
+# 2.0.10
+- Disabled visual extrapolation in Platformer mode.
+
 # 2.0.9
 - Added cheat tags because it could be considered a cheat on leaderboards or forums.
 

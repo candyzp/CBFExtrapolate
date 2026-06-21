@@ -220,7 +220,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
   void update(float dt) override {
     auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
-    if (g_softToggle || !playLayer) {
+    bool isPlatformer = (m_player1 && m_player1->m_isPlatformer) ||
+                        (m_player2 && m_player2->m_isPlatformer);
+    if (g_softToggle || !playLayer || isPlatformer) {
       GJBaseGameLayer::update(dt);
       return;
     }
@@ -273,12 +275,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    bool isPlatformer = (m_player1 && m_player1->m_isPlatformer) ||
+                        (m_player2 && m_player2->m_isPlatformer);
+
     bool paused = playLayer->getChildByType<PauseLayer>(0) != nullptr ||
                   CCDirector::sharedDirector()
                           ->getRunningScene()
                           ->getChildByType<PauseLayer>(0) != nullptr;
 
-    if (g_softToggle || isFlipping() || paused) {
+    if (g_softToggle || isFlipping() || paused || isPlatformer) {
       GJBaseGameLayer::visit();
       return;
     }
@@ -696,7 +701,7 @@ class $modify(MyPlayer, PlayerObject) {
   }
 
   void update(float dt) override {
-    if (g_softToggle) {
+    if (g_softToggle || m_isPlatformer) {
       PlayerObject::update(dt);
       return;
     }
