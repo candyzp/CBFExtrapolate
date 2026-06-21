@@ -30,45 +30,14 @@
 
 using namespace geode::prelude;
 
-static std::atomic<bool> g_hasCBF = false;
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
 
-#ifdef GEODE_IS_WINDOWS
-enum GameAction : int {
-  p1Jump = 0,
-  p1Left = 1,
-  p1Right = 2,
-  p2Jump = 3,
-  p2Left = 4,
-  p2Right = 5
-};
-
-static std::array<std::unordered_set<size_t>, 6> g_inputBinds;
-static std::mutex g_keybindsMutex;
-
-static void updateKeybinds() {
-  std::array<std::unordered_set<size_t>, 6> binds;
-  if (auto keybindsMod = Loader::get()->getLoadedMod("geode.custom-keybinds")) {
-    auto populateBind = [&](const char *settingKey, GameAction action) {
-      auto vec = keybindsMod->getSettingValue<std::vector<Keybind>>(settingKey);
-      for (const auto &bind : vec) {
-        binds[action].emplace(static_cast<size_t>(bind.key));
-      }
-    };
-    populateBind("jump-p1", p1Jump);
-    populateBind("move-left-p1", p1Left);
-    populateBind("move-right-p1", p1Right);
-    populateBind("jump-p2", p2Jump);
-    populateBind("move-left-p2", p2Left);
-    populateBind("move-right-p2", p2Right);
-  }
-  {
-    std::lock_guard<std::mutex> lock(g_keybindsMutex);
-    g_inputBinds = binds;
-  }
+$on_mod(Loaded) {
+  g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
+  listenForSettingChanges<bool>("soft-toggle",
+                                [](bool value) { g_softToggle = value; });
 }
-#endif
 
 static void extrapolatePushButton(PlayerObject *player, PlayerButton button) {
   player->m_holdingButtons[static_cast<int>(button)] = true;
@@ -91,167 +60,6 @@ static void extrapolateReleaseButton(PlayerObject *player,
     player->m_holdingLeft = false;
   } else if (button == PlayerButton::Right) {
     player->m_holdingRight = false;
-  }
-}
-
-#ifdef GEODE_IS_WINDOWS
-#include <windows.h>
-#include <winuser.h>
-
-struct RawInputEvent {
-  double timestamp;
-  PlayerButton button;
-  bool isPush;
-  bool isPlayer2;
-};
-
-static std::vector<RawInputEvent> g_rawInputs;
-static std::mutex g_rawInputsMutex;
-static WNDPROC g_originalWndProc = nullptr;
-
-static LRESULT CALLBACK ExtrapolateWndProc(HWND hwnd, UINT msg, WPARAM wParam,
-                                           LPARAM lParam) {
-  if (g_hasCBF.load() && !g_softToggle) {
-    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP ||
-        msg == WM_SYSKEYUP) {
-      USHORT vkey = static_cast<USHORT>(wParam);
-      bool isPush = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
-      bool isRepeat = (lParam & (1 << 30)) != 0;
-
-      if (!(isPush && isRepeat)) {
-        PlayerButton button = PlayerButton::Jump;
-        bool isPlayer2 = false;
-        bool valid = false;
-
-        if (vkey >= VK_NUMPAD0 && vkey <= VK_NUMPAD9) {
-          vkey -= 0x30;
-        }
-
-        {
-          std::lock_guard<std::mutex> lock(g_keybindsMutex);
-          if (g_inputBinds[p1Jump].contains(vkey)) {
-            button = PlayerButton::Jump;
-            isPlayer2 = false;
-            valid = true;
-          } else if (g_inputBinds[p1Left].contains(vkey)) {
-            button = PlayerButton::Left;
-            isPlayer2 = false;
-            valid = true;
-          } else if (g_inputBinds[p1Right].contains(vkey)) {
-            button = PlayerButton::Right;
-            isPlayer2 = false;
-            valid = true;
-          } else if (g_inputBinds[p2Jump].contains(vkey)) {
-            button = PlayerButton::Jump;
-            isPlayer2 = true;
-            valid = true;
-          } else if (g_inputBinds[p2Left].contains(vkey)) {
-            button = PlayerButton::Left;
-            isPlayer2 = true;
-            valid = true;
-          } else if (g_inputBinds[p2Right].contains(vkey)) {
-            button = PlayerButton::Right;
-            isPlayer2 = true;
-            valid = true;
-          }
-        }
-
-        if (valid) {
-          bool flip2Player =
-              GameManager::sharedState()->getGameVariable("0010");
-          if (flip2Player) {
-            isPlayer2 = !isPlayer2;
-          }
-
-          DWORD msgTime = GetMessageTime();
-          DWORD currentTime = GetTickCount();
-          DWORD diffMs = currentTime - msgTime;
-          double diffSec = static_cast<double>(diffMs) / 1000.0;
-          double timestamp = getCurrentTimestamp() - diffSec;
-
-          std::lock_guard<std::mutex> lock(g_rawInputsMutex);
-          bool duplicate = false;
-          if (!g_rawInputs.empty()) {
-            const auto &last = g_rawInputs.back();
-            if (last.button == button && last.isPush == isPush &&
-                last.isPlayer2 == isPlayer2 &&
-                std::abs(last.timestamp - timestamp) < 0.005) {
-              duplicate = true;
-            }
-          }
-          if (!duplicate) {
-            g_rawInputs.push_back({timestamp, button, isPush, isPlayer2});
-          }
-        }
-      }
-    } else if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP ||
-               msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) {
-      bool isPush = (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN);
-      bool isPlayer2 = (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP);
-      PlayerButton button = PlayerButton::Jump;
-
-      bool flip2Player = GameManager::sharedState()->getGameVariable("0010");
-      if (flip2Player) {
-        isPlayer2 = !isPlayer2;
-      }
-
-      DWORD msgTime = GetMessageTime();
-      DWORD currentTime = GetTickCount();
-      DWORD diffMs = currentTime - msgTime;
-      double diffSec = static_cast<double>(diffMs) / 1000.0;
-      double timestamp = getCurrentTimestamp() - diffSec;
-
-      std::lock_guard<std::mutex> lock(g_rawInputsMutex);
-      bool duplicate = false;
-      if (!g_rawInputs.empty()) {
-        const auto &last = g_rawInputs.back();
-        if (last.button == button && last.isPush == isPush &&
-            last.isPlayer2 == isPlayer2 &&
-            std::abs(last.timestamp - timestamp) < 0.005) {
-          duplicate = true;
-        }
-      }
-      if (!duplicate) {
-        g_rawInputs.push_back({timestamp, button, isPush, isPlayer2});
-      }
-    }
-  }
-
-  if (g_originalWndProc) {
-    return CallWindowProcA(g_originalWndProc, hwnd, msg, wParam, lParam);
-  }
-  return DefWindowProcA(hwnd, msg, wParam, lParam);
-}
-#endif
-
-$on_mod(Loaded) {
-  g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
-  listenForSettingChanges<bool>("soft-toggle",
-                                [](bool value) { g_softToggle = value; });
-
-  if (auto cbfMod = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
-    g_hasCBF = !cbfMod->getSettingValue<bool>("soft-toggle");
-    listenForSettingChanges<bool>(
-        "soft-toggle", [](bool value) { g_hasCBF = !value; }, cbfMod);
-  } else {
-    g_hasCBF = false;
-  }
-
-  if (auto keybindsMod = Loader::get()->getLoadedMod("geode.custom-keybinds")) {
-    updateKeybinds();
-
-    auto listenKeybind = [keybindsMod](const char *settingKey) {
-      listenForSettingChanges<std::vector<Keybind>>(
-          settingKey, [](std::vector<Keybind> const &) { updateKeybinds(); },
-          keybindsMod);
-    };
-
-    listenKeybind("jump-p1");
-    listenKeybind("move-left-p1");
-    listenKeybind("move-right-p1");
-    listenKeybind("jump-p2");
-    listenKeybind("move-left-p2");
-    listenKeybind("move-right-p2");
   }
 }
 
@@ -476,6 +284,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_effectManager->saveToState(ems);
     }
 
+    bool hasCBF = false;
+    if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
+      hasCBF = !m->getSettingValue<bool>("soft-toggle");
+    }
+
     bool origPlayerDied = m_playerDied;
     bool hasP1 = m_player1 != nullptr;
     bool hasP2 = m_player2 != nullptr;
@@ -627,36 +440,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         if (dtSeconds > 0.0 && dtSeconds < 2.0) {
           std::vector<PlayerButtonCommand> pendingClicks;
-#ifdef GEODE_IS_WINDOWS
-          if (g_hasCBF) {
-            std::lock_guard<std::mutex> lock(g_rawInputsMutex);
-            for (const auto &cmd : g_rawInputs) {
-              if (!cmd.isPlayer2 && cmd.timestamp > state.lastTime &&
-                  cmd.timestamp <= tCurrentClamped) {
-                PlayerButtonCommand pbc;
-                pbc.m_button = cmd.button;
-                pbc.m_isPush = cmd.isPush;
-                pbc.m_isPlayer2 = cmd.isPlayer2;
-                pbc.m_timestamp = cmd.timestamp;
-                pendingClicks.push_back(pbc);
-              }
-            }
-          } else {
+          if (hasCBF) {
+            bool isTwoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
             for (const auto &cmd : m_queuedButtons) {
-              if (!cmd.m_isPlayer2 && cmd.m_timestamp > state.lastTime &&
+              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
                   cmd.m_timestamp <= tCurrentClamped) {
                 pendingClicks.push_back(cmd);
               }
             }
           }
-#else
-          for (const auto &cmd : m_queuedButtons) {
-            if (!cmd.m_isPlayer2 && cmd.m_timestamp > state.lastTime &&
-                cmd.m_timestamp <= tCurrentClamped) {
-              pendingClicks.push_back(cmd);
-            }
-          }
-#endif
 
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
 
@@ -721,36 +514,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         if (dtSeconds > 0.0 && dtSeconds < 2.0) {
           std::vector<PlayerButtonCommand> pendingClicks;
-#ifdef GEODE_IS_WINDOWS
-          if (g_hasCBF) {
-            std::lock_guard<std::mutex> lock(g_rawInputsMutex);
-            for (const auto &cmd : g_rawInputs) {
-              if (cmd.isPlayer2 && cmd.timestamp > state.lastTime &&
-                  cmd.timestamp <= tCurrentClamped) {
-                PlayerButtonCommand pbc;
-                pbc.m_button = cmd.button;
-                pbc.m_isPush = cmd.isPush;
-                pbc.m_isPlayer2 = cmd.isPlayer2;
-                pbc.m_timestamp = cmd.timestamp;
-                pendingClicks.push_back(pbc);
-              }
-            }
-          } else {
+          if (hasCBF) {
+            bool isTwoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
             for (const auto &cmd : m_queuedButtons) {
-              if (cmd.m_isPlayer2 && cmd.m_timestamp > state.lastTime &&
+              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
                   cmd.m_timestamp <= tCurrentClamped) {
                 pendingClicks.push_back(cmd);
               }
             }
           }
-#else
-          for (const auto &cmd : m_queuedButtons) {
-            if (cmd.m_isPlayer2 && cmd.m_timestamp > state.lastTime &&
-                cmd.m_timestamp <= tCurrentClamped) {
-              pendingClicks.push_back(cmd);
-            }
-          }
-#endif
 
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
 
@@ -981,17 +754,7 @@ class $modify(MyPlayer, PlayerObject) {
       state->lastDt += dt;
       state->steps++;
 
-#ifdef GEODE_IS_WINDOWS
-      {
-        std::lock_guard<std::mutex> lock(g_rawInputsMutex);
-        g_rawInputs.erase(std::remove_if(g_rawInputs.begin(), g_rawInputs.end(),
-                                         [&](const RawInputEvent &ev) {
-                                           return ev.timestamp <
-                                                  state->lastTime - 2.0;
-                                         }),
-                          g_rawInputs.end());
-      }
-#endif
+
     }
   }
 };
@@ -1012,9 +775,6 @@ class $modify(MyPlayLayer, PlayLayer) {
     if (!PlayLayer::init(level, useReplay, dontCreateObjects))
       return false;
 
-#ifdef GEODE_IS_WINDOWS
-    updateKeybinds();
-#endif
     return true;
   }
 
@@ -1072,29 +832,7 @@ class $modify(MyPlayLayer, PlayLayer) {
   }
 };
 
-#include <Geode/modify/MenuLayer.hpp>
 
-class $modify(MyMenuLayer, MenuLayer) {
-  bool init() {
-    if (!MenuLayer::init())
-      return false;
-
-#ifdef GEODE_IS_WINDOWS
-    static bool subclassed = false;
-    if (!subclassed) {
-      HWND hwnd = WindowFromDC(wglGetCurrentDC());
-      if (hwnd) {
-        g_originalWndProc = reinterpret_cast<WNDPROC>(
-            SetWindowLongPtrA(hwnd, GWLP_WNDPROC,
-                              reinterpret_cast<LONG_PTR>(ExtrapolateWndProc)));
-        subclassed = true;
-      }
-    }
-#endif
-
-    return true;
-  }
-};
 
 class $modify(MyRingObject, RingObject) {
   void spawnCircle() {
