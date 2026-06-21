@@ -618,8 +618,8 @@ static bool isFakePlayer(PlayerObject *player) {
 class $modify(MyPlayer, PlayerObject) {
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayerObject::update", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayerObject::playDeathEffect",
-                               Priority::First - 1);
+    (void)self.setHookPriorityPre("PlayerObject::playDeathEffect",
+                                  Priority::First - 100);
     (void)self.setHookPriority("PlayerObject::ringJump", Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::bumpPlayer", Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::propellPlayer",
@@ -738,7 +738,7 @@ class $modify(MyPlayer, PlayerObject) {
 class $modify(MyPlayLayer, PlayLayer) {
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayLayer::init", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayLayer::destroyPlayer", Priority::First - 1);
+    (void)self.setHookPriorityPre("PlayLayer::destroyPlayer", Priority::First - 100);
     (void)self.setHookPriority("PlayLayer::resetLevel", Priority::VeryEarly);
     (void)self.setHookPriority("PlayLayer::resetLevelFromStart",
                                Priority::VeryEarly);
