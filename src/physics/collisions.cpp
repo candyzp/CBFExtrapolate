@@ -378,6 +378,9 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     if (object->m_objectType == GameObjectType::Hazard ||
         object->m_objectType == GameObjectType::AnimatedHazard) {
+      if (Bot::get()->trajectory().isFakePlayer(player)) {
+        continue;
+      }
       if (pl->m_hazardCollisionObjectsCount <
           pl->m_hazardCollisionObjectsIndex) {
         pl->m_hazardCollisionObjects.at(pl->m_hazardCollisionObjectsCount) =

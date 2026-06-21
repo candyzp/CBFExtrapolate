@@ -1,3 +1,7 @@
+# 2.0.2
+- Solved the problem where simulations affected actual physics.
+- Fixed the issue where fake player death triggered MegaHack's death detector.
+
 # 2.0.1
 - Changed to use Silicate's physics simulation logic (to avoid affecting actual game physics)
 

@@ -267,6 +267,7 @@ struct PlayerState {
   int steps = 0;
   double prog = 0;
   double tickTime = 0;
+  bool isDead = false;
 };
 
 static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
@@ -353,9 +354,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
   struct Fields {
     PlayerState p1;
     PlayerState p2;
-    CCPoint m_lastCamDisp = {0, 0};
-    CCPoint m_camDispAccum = {0, 0};
-    bool m_hasNewCamDisp = false;
+    CCPoint lastCam = {0, 0};
+    CCPoint prevCam = {0, 0};
     std::vector<std::pair<CCNode *, float>> origGroundX;
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
@@ -372,8 +372,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
   static void onModify(auto &self) {
     (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
-    (void)self.setHookPriority("GJBaseGameLayer::updateCamera",
-                               Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::flipGravity",
                                Priority::VeryEarly);
@@ -409,40 +407,21 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  void updateCamera(float dt) {
-    if (g_softToggle) {
-      GJBaseGameLayer::updateCamera(dt);
-      return;
-    }
-
-    if (m_fields->p1.steps == 0 && m_fields->p2.steps == 0) {
-      GJBaseGameLayer::updateCamera(0.f);
-      return;
-    }
-
-    CCPoint camBefore =
-        m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
-    GJBaseGameLayer::updateCamera(dt);
-    if (m_objectLayer) {
-      CCPoint disp = m_objectLayer->getPosition() - camBefore;
-      m_fields->m_camDispAccum += disp;
-      m_fields->m_hasNewCamDisp = true;
-    }
-  }
-
   void update(float dt) override {
     if (g_softToggle) {
       GJBaseGameLayer::update(dt);
       return;
     }
 
-    m_fields->m_camDispAccum = CCPoint(0.f, 0.f);
-    m_fields->m_hasNewCamDisp = false;
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;
 
+    CCPoint camBefore =
+        m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
+
     GJBaseGameLayer::update(dt);
 
+    bool ran = false;
     for (int i = 0; i < 2; ++i) {
       auto &state = (i == 0) ? m_fields->p1 : m_fields->p2;
       auto player = (i == 0) ? m_player1 : m_player2;
@@ -450,10 +429,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (state.steps > 0) {
           state.tickTime = state.lastDt;
           state.lastSteps = state.steps;
+          ran = true;
         } else {
           state.lastSteps = 0;
         }
       }
+    }
+
+    if (ran && m_objectLayer) {
+      m_fields->lastCam = m_objectLayer->getPosition();
+      m_fields->prevCam = camBefore;
     }
   }
 
@@ -484,9 +469,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
-    if (m_fields->m_hasNewCamDisp) {
-      m_fields->m_lastCamDisp = m_fields->m_camDispAccum;
-      m_fields->m_hasNewCamDisp = false;
+    GJGameState origState = m_gameState;
+    EffectManagerState ems;
+    bool hasEffectManager = (m_effectManager != nullptr);
+    if (hasEffectManager) {
+      m_effectManager->saveToState(ems);
     }
 
     bool origPlayerDied = m_playerDied;
@@ -561,8 +548,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           double currentTime = state.lastTime;
           double targetTime = state.lastTime + dtSeconds;
+          state.isDead = false;
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
+            if (state.isDead)
+              return;
             double remaining = dtFrames;
             double stepSize = 0.25;
             while (remaining > 0.0) {
@@ -576,7 +566,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
               player->updateRotation(delta);
               player->m_shipRotation = player->getPosition();
 
-              this->checkCollisions(player, delta, false);
+              if (this->checkCollisions(player, delta, false) == 1) {
+                state.isDead = true;
+                break;
+              }
 
               phys::checkSpawnObjects(this, player);
               this->m_effectManager->postCollisionCheck();
@@ -588,6 +581,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           };
 
           for (const auto &cmd : sortedClicks) {
+            if (state.isDead)
+              break;
             if (cmd.m_timestamp > currentTime && cmd.m_timestamp < targetTime) {
               double dt = (cmd.m_timestamp - currentTime) * timeScale;
               double dtFrames = dt * 60.0;
@@ -604,14 +599,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
             }
           }
 
-          if (targetTime > currentTime) {
+          if (targetTime > currentTime && !state.isDead) {
             double dt = (targetTime - currentTime) * timeScale;
             double dtFrames = dt * 60.0;
 
             updatePlayerSubstepped(dtFrames);
           }
 
-          player->m_isDead = false;
+          player->m_isDead = state.isDead;
 
           g_extrapolating = false;
         };
@@ -697,7 +692,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
               m_fields->m_fakePlayer1->getPosition());
           m_player1->setRotation(rot);
 
-          CCPoint camDisp = m_fields->m_lastCamDisp;
+          CCPoint camDisp = m_fields->lastCam - m_fields->prevCam;
           if (maxDtSeconds > 0.0001) {
             camPct = dtSeconds / maxDtSeconds;
             if (camPct > 1.0)
@@ -812,7 +807,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (!dead && hasP1 && m_fields->p1.lastTime != 0 &&
         camOff != CCPoint{0, 0}) {
-      float move = m_fields->m_lastCamDisp.x;
+      float move = m_fields->lastCam.x - m_fields->prevCam.x;
       float shift = move * xSign * static_cast<float>(camPct);
       shiftGround(m_groundLayer, shift);
       shiftGround(m_groundLayer2, shift);
@@ -857,6 +852,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       node->setPositionX(x);
     }
     m_playerDied = origPlayerDied;
+
+    m_gameState = origState;
+    if (hasEffectManager) {
+      m_effectManager->loadFromState(ems);
+    }
   }
 };
 
@@ -867,8 +867,8 @@ static bool isFakePlayer(PlayerObject *player) {
 class $modify(MyPlayer, PlayerObject) {
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayerObject::update", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayerObject::playerDestroyed",
-                               Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::playDeathEffect",
+                               Priority::First - 1);
     (void)self.setHookPriority("PlayerObject::ringJump", Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::bumpPlayer", Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::propellPlayer",
@@ -924,11 +924,11 @@ class $modify(MyPlayer, PlayerObject) {
   }
 #endif
 
-  void playerDestroyed(bool noEffects) {
-    if (isFakePlayer(this)) {
+  void playDeathEffect() {
+    if (g_extrapolating || isFakePlayer(this)) {
       return;
     }
-    PlayerObject::playerDestroyed(noEffects);
+    PlayerObject::playDeathEffect();
   }
 
   void update(float dt) override {
@@ -999,7 +999,7 @@ class $modify(MyPlayer, PlayerObject) {
 class $modify(MyPlayLayer, PlayLayer) {
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayLayer::init", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayLayer::destroyPlayer", Priority::VeryEarly);
+    (void)self.setHookPriority("PlayLayer::destroyPlayer", Priority::First - 1);
     (void)self.setHookPriority("PlayLayer::resetLevel", Priority::VeryEarly);
     (void)self.setHookPriority("PlayLayer::resetLevelFromStart",
                                Priority::VeryEarly);
@@ -1023,9 +1023,8 @@ class $modify(MyPlayLayer, PlayLayer) {
     if (myGL) {
       myGL->m_fields->p1 = PlayerState();
       myGL->m_fields->p2 = PlayerState();
-      myGL->m_fields->m_lastCamDisp = CCPoint(0.f, 0.f);
-      myGL->m_fields->m_camDispAccum = CCPoint(0.f, 0.f);
-      myGL->m_fields->m_hasNewCamDisp = false;
+      myGL->m_fields->lastCam = CCPoint(0.f, 0.f);
+      myGL->m_fields->prevCam = CCPoint(0.f, 0.f);
       if (myGL->m_fields->m_fakePlayer1) {
         myGL->m_fields->m_fakePlayer1->release();
         myGL->m_fields->m_fakePlayer1 = nullptr;
@@ -1038,8 +1037,16 @@ class $modify(MyPlayLayer, PlayLayer) {
   }
 
   void destroyPlayer(PlayerObject *player, GameObject *object) override {
-    if (g_extrapolating || isFakePlayer(player)) {
-      return;
+    auto myGL = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this));
+    if (myGL) {
+      if (player == myGL->m_fields->m_fakePlayer1) {
+        myGL->m_fields->p1.isDead = true;
+        return;
+      }
+      if (player == myGL->m_fields->m_fakePlayer2) {
+        myGL->m_fields->p2.isDead = true;
+        return;
+      }
     }
     PlayLayer::destroyPlayer(player, object);
   }
