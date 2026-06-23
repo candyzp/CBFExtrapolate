@@ -199,6 +199,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void flipGravity(PlayerObject *player, bool gravity, bool unk) {
+    if (g_softToggle) {
+      GJBaseGameLayer::flipGravity(player, gravity, unk);
+      return;
+    }
     if (isFakePlayer(player)) {
       phys::flipGravity(player, gravity);
     } else {
@@ -207,6 +211,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void teleportPlayer(TeleportPortalObject *obj, PlayerObject *player) {
+    if (g_softToggle) {
+      GJBaseGameLayer::teleportPlayer(obj, player);
+      return;
+    }
     if (isFakePlayer(player)) {
       phys::teleportPlayer(this, obj, player);
     } else {
@@ -217,6 +225,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
   void collisionCheckObjects(PlayerObject *player,
                              gd::vector<GameObject *> *objects, int length,
                              float dt) {
+    if (g_softToggle) {
+      GJBaseGameLayer::collisionCheckObjects(player, objects, length, dt);
+      return;
+    }
     if (isFakePlayer(player)) {
       phys::collisionCheckObjects(this, player, objects, length, dt);
     } else {
@@ -740,6 +752,10 @@ class $modify(MyPlayer, PlayerObject) {
   }
 
   void ringJump(RingObject *ring, bool unk) {
+    if (g_softToggle) {
+      PlayerObject::ringJump(ring, unk);
+      return;
+    }
     if (isFakePlayer(this)) {
       phys::ringJump(this, ring);
     } else {
@@ -749,6 +765,10 @@ class $modify(MyPlayer, PlayerObject) {
 
   void bumpPlayer(float force, int objectType, bool playEffect,
                   GameObject *object) {
+    if (g_softToggle) {
+      PlayerObject::bumpPlayer(force, objectType, playEffect, object);
+      return;
+    }
     if (isFakePlayer(this)) {
       phys::bumpPlayer(this, force, objectType, playEffect, object);
     } else {
@@ -757,6 +777,10 @@ class $modify(MyPlayer, PlayerObject) {
   }
 
   void propellPlayer(float force, bool dontPlayEffect, int objectType) {
+    if (g_softToggle) {
+      PlayerObject::propellPlayer(force, dontPlayEffect, objectType);
+      return;
+    }
     if (isFakePlayer(this)) {
       phys::propellPlayer(this, force, dontPlayEffect, objectType);
     } else {
@@ -765,6 +789,10 @@ class $modify(MyPlayer, PlayerObject) {
   }
 
   void startDashing(DashRingObject *obj) {
+    if (g_softToggle) {
+      PlayerObject::startDashing(obj);
+      return;
+    }
     if (isFakePlayer(this)) {
       phys::startDashing(this, obj);
     } else {
@@ -774,6 +802,10 @@ class $modify(MyPlayer, PlayerObject) {
 
 #ifdef GEODE_IS_WINDOWS
   void stopDashing() {
+    if (g_softToggle) {
+      PlayerObject::stopDashing();
+      return;
+    }
     if (isFakePlayer(this)) {
       phys::stopDashing(this);
     } else {
@@ -783,6 +815,10 @@ class $modify(MyPlayer, PlayerObject) {
 #endif
 
   void playDeathEffect() {
+    if (g_softToggle) {
+      PlayerObject::playDeathEffect();
+      return;
+    }
     if (g_extrapolating || isFakePlayer(this)) {
       return;
     }
@@ -881,6 +917,10 @@ class $modify(MyPlayLayer, PlayLayer) {
   }
 
   void destroyPlayer(PlayerObject *player, GameObject *object) override {
+    if (g_softToggle) {
+      PlayLayer::destroyPlayer(player, object);
+      return;
+    }
     auto myGL = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this));
     if (myGL) {
       if (player == myGL->m_fields->m_fakePlayer1) {
@@ -897,27 +937,39 @@ class $modify(MyPlayLayer, PlayLayer) {
 
   void resetLevel() override {
     PlayLayer::resetLevel();
-    resetExtrapolation();
+    if (!g_softToggle) {
+      resetExtrapolation();
+    }
   }
 
   void resetLevelFromStart() {
     PlayLayer::resetLevelFromStart();
-    resetExtrapolation();
+    if (!g_softToggle) {
+      resetExtrapolation();
+    }
   }
 
   void delayedResetLevel() {
     PlayLayer::delayedResetLevel();
-    resetExtrapolation();
+    if (!g_softToggle) {
+      resetExtrapolation();
+    }
   }
 
   void fullReset() {
     PlayLayer::fullReset();
-    resetExtrapolation();
+    if (!g_softToggle) {
+      resetExtrapolation();
+    }
   }
 };
 
 class $modify(MyRingObject, RingObject) {
   void spawnCircle() {
+    if (g_softToggle) {
+      RingObject::spawnCircle();
+      return;
+    }
     if (g_extrapolating) {
       return;
     }
@@ -927,6 +979,10 @@ class $modify(MyRingObject, RingObject) {
 
 class $modify(MyEnhancedGameObject, EnhancedGameObject) {
   void activatedByPlayer(PlayerObject *player) {
+    if (g_softToggle) {
+      EnhancedGameObject::activatedByPlayer(player);
+      return;
+    }
     if (isFakePlayer(player)) {
       phys::activateForTrajectory(reinterpret_cast<EffectGameObject *>(this),
                                   player);
