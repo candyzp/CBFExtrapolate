@@ -1,3 +1,6 @@
+# 2.0.11
+- Added camera zoom extrapolation
+
 # 2.0.10
 - Disabled visual extrapolation in Platformer mode.
 

@@ -153,6 +153,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerState p2;
     CCPoint lastCam = {0, 0};
     CCPoint prevCam = {0, 0};
+
+    float lastCamScaleX = 1.0f;
+    float prevCamScaleX = 1.0f;
+    float lastCamScaleY = 1.0f;
+    float prevCamScaleY = 1.0f;
+
     std::vector<std::pair<CCNode *, float>> origGroundX;
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
@@ -232,6 +238,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     CCPoint camBefore =
         m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
+    float scaleXBefore = m_objectLayer ? m_objectLayer->getScaleX() : 1.0f;
+    float scaleYBefore = m_objectLayer ? m_objectLayer->getScaleY() : 1.0f;
 
     GJBaseGameLayer::update(dt);
 
@@ -253,6 +261,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (ran && m_objectLayer) {
       m_fields->lastCam = m_objectLayer->getPosition();
       m_fields->prevCam = camBefore;
+      m_fields->lastCamScaleX = m_objectLayer->getScaleX();
+      m_fields->prevCamScaleX = scaleXBefore;
+      m_fields->lastCamScaleY = m_objectLayer->getScaleY();
+      m_fields->prevCamScaleY = scaleYBefore;
     }
   }
 
@@ -562,6 +574,60 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_objectLayer->setPosition(origObj + camOff);
     }
 
+    float factorX = 1.0f;
+    float factorY = 1.0f;
+    if (m_fields->lastCamScaleX != 0.0f) {
+      float interpolatedCamScaleX =
+          m_fields->prevCamScaleX +
+          (m_fields->lastCamScaleX - m_fields->prevCamScaleX) *
+              static_cast<float>(camPct);
+      factorX = interpolatedCamScaleX / m_fields->lastCamScaleX;
+    }
+    if (m_fields->lastCamScaleY != 0.0f) {
+      float interpolatedCamScaleY =
+          m_fields->prevCamScaleY +
+          (m_fields->lastCamScaleY - m_fields->prevCamScaleY) *
+              static_cast<float>(camPct);
+      factorY = interpolatedCamScaleY / m_fields->lastCamScaleY;
+    }
+
+    float origObjScaleX = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
+    float origObjScaleY = m_objectLayer ? m_objectLayer->getScaleY() : 1.f;
+    float origP1ScaleX = m_player1 ? m_player1->getScaleX() : 1.f;
+    float origP1ScaleY = m_player1 ? m_player1->getScaleY() : 1.f;
+    float origP2ScaleX = m_player2 ? m_player2->getScaleX() : 1.f;
+    float origP2ScaleY = m_player2 ? m_player2->getScaleY() : 1.f;
+    float origGroundScaleX = m_groundLayer ? m_groundLayer->getScaleX() : 1.f;
+    float origGroundScaleY = m_groundLayer ? m_groundLayer->getScaleY() : 1.f;
+    float origGround2ScaleX =
+        m_groundLayer2 ? m_groundLayer2->getScaleX() : 1.f;
+    float origGround2ScaleY =
+        m_groundLayer2 ? m_groundLayer2->getScaleY() : 1.f;
+
+    bool hasScaleChange = (factorX != 1.0f || factorY != 1.0f);
+    if (hasScaleChange) {
+      if (m_objectLayer) {
+        m_objectLayer->setScaleX(origObjScaleX * factorX);
+        m_objectLayer->setScaleY(origObjScaleY * factorY);
+      }
+      if (m_player1) {
+        m_player1->setScaleX(origP1ScaleX * factorX);
+        m_player1->setScaleY(origP1ScaleY * factorY);
+      }
+      if (m_player2) {
+        m_player2->setScaleX(origP2ScaleX * factorX);
+        m_player2->setScaleY(origP2ScaleY * factorY);
+      }
+      if (m_groundLayer) {
+        m_groundLayer->setScaleX(origGroundScaleX * factorX);
+        m_groundLayer->setScaleY(origGroundScaleY * factorY);
+      }
+      if (m_groundLayer2) {
+        m_groundLayer2->setScaleX(origGround2ScaleX * factorX);
+        m_groundLayer2->setScaleY(origGround2ScaleY * factorY);
+      }
+    }
+
     m_fields->origGroundX.clear();
     auto shiftGround = [&](GJGroundLayer *ground, float shift) {
       if (!ground)
@@ -583,6 +649,29 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     GJBaseGameLayer::visit();
+
+    if (hasScaleChange) {
+      if (m_objectLayer) {
+        m_objectLayer->setScaleX(origObjScaleX);
+        m_objectLayer->setScaleY(origObjScaleY);
+      }
+      if (m_player1) {
+        m_player1->setScaleX(origP1ScaleX);
+        m_player1->setScaleY(origP1ScaleY);
+      }
+      if (m_player2) {
+        m_player2->setScaleX(origP2ScaleX);
+        m_player2->setScaleY(origP2ScaleY);
+      }
+      if (m_groundLayer) {
+        m_groundLayer->setScaleX(origGroundScaleX);
+        m_groundLayer->setScaleY(origGroundScaleY);
+      }
+      if (m_groundLayer2) {
+        m_groundLayer2->setScaleX(origGround2ScaleX);
+        m_groundLayer2->setScaleY(origGround2ScaleY);
+      }
+    }
 
     if (hasP1 && simulatedP1) {
       m_player1->CCNode::setPosition(origP1);
