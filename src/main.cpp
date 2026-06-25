@@ -333,7 +333,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (!m_fields->m_fakePlayer1 ||
             m_fields->m_fakePlayer1->getParent() != this) {
           if (m_fields->m_fakePlayer1) {
-            m_fields->m_fakePlayer1->removeFromParentAndCleanup(true);
             m_fields->m_fakePlayer1->release();
             m_fields->m_fakePlayer1 = nullptr;
           }
@@ -347,7 +346,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (!m_fields->m_fakePlayer2 ||
             m_fields->m_fakePlayer2->getParent() != this) {
           if (m_fields->m_fakePlayer2) {
-            m_fields->m_fakePlayer2->removeFromParentAndCleanup(true);
             m_fields->m_fakePlayer2->release();
             m_fields->m_fakePlayer2 = nullptr;
           }
@@ -922,16 +920,6 @@ class $modify(MyPlayLayer, PlayLayer) {
       myGL->m_fields->p2 = PlayerState();
       myGL->m_fields->lastCam = CCPoint(0.f, 0.f);
       myGL->m_fields->prevCam = CCPoint(0.f, 0.f);
-      if (myGL->m_fields->m_fakePlayer1) {
-        myGL->m_fields->m_fakePlayer1->removeFromParentAndCleanup(true);
-        myGL->m_fields->m_fakePlayer1->release();
-        myGL->m_fields->m_fakePlayer1 = nullptr;
-      }
-      if (myGL->m_fields->m_fakePlayer2) {
-        myGL->m_fields->m_fakePlayer2->removeFromParentAndCleanup(true);
-        myGL->m_fields->m_fakePlayer2->release();
-        myGL->m_fields->m_fakePlayer2 = nullptr;
-      }
     }
   }
 

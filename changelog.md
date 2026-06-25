@@ -1,6 +1,9 @@
+# 2.1.1
+- Fixed a crash on level reset by reusing fake player objects instead of recreating them.
+
 # 2.1.0
-- Fixed memory leak of fake players causing FPS drops over time.
 - Fixed ground layer position offset issue during camera y-axis interpolation.
+- Fixed memory leak of fake players causing FPS drops over time.
 
 # 2.0.11
 - Added camera zoom extrapolation
