@@ -1,3 +1,7 @@
+# 2.1.0
+- Fixed memory leak of fake players causing FPS drops over time.
+- Fixed ground layer position offset issue during camera y-axis interpolation.
+
 # 2.0.11
 - Added camera zoom extrapolation
 - Modified soft toggle to disable all hooks

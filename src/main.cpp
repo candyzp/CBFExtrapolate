@@ -333,6 +333,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (!m_fields->m_fakePlayer1 ||
             m_fields->m_fakePlayer1->getParent() != this) {
           if (m_fields->m_fakePlayer1) {
+            m_fields->m_fakePlayer1->removeFromParentAndCleanup(true);
             m_fields->m_fakePlayer1->release();
             m_fields->m_fakePlayer1 = nullptr;
           }
@@ -346,6 +347,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (!m_fields->m_fakePlayer2 ||
             m_fields->m_fakePlayer2->getParent() != this) {
           if (m_fields->m_fakePlayer2) {
+            m_fields->m_fakePlayer2->removeFromParentAndCleanup(true);
             m_fields->m_fakePlayer2->release();
             m_fields->m_fakePlayer2 = nullptr;
           }
@@ -615,6 +617,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_groundLayer2 ? m_groundLayer2->getScaleX() : 1.f;
     float origGround2ScaleY =
         m_groundLayer2 ? m_groundLayer2->getScaleY() : 1.f;
+    float origGroundY = m_groundLayer ? m_groundLayer->getPositionY() : 0.f;
+    float origGround2Y = m_groundLayer2 ? m_groundLayer2->getPositionY() : 0.f;
 
     bool hasScaleChange = (factorX != 1.0f || factorY != 1.0f);
     if (hasScaleChange) {
@@ -658,6 +662,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
       float shift = move * xSign * static_cast<float>(camPct);
       shiftGround(m_groundLayer, shift);
       shiftGround(m_groundLayer2, shift);
+
+      if (m_groundLayer) {
+        m_groundLayer->setPositionY(origGroundY + camOff.y);
+      }
+      if (m_groundLayer2) {
+        m_groundLayer2->setPositionY(origGround2Y + camOff.y);
+      }
     }
 
     GJBaseGameLayer::visit();
@@ -720,6 +731,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     for (const auto &[node, x] : m_fields->origGroundX) {
       node->setPositionX(x);
+    }
+    if (m_groundLayer) {
+      m_groundLayer->setPositionY(origGroundY);
+    }
+    if (m_groundLayer2) {
+      m_groundLayer2->setPositionY(origGround2Y);
     }
     m_playerDied = origPlayerDied;
 
@@ -906,10 +923,12 @@ class $modify(MyPlayLayer, PlayLayer) {
       myGL->m_fields->lastCam = CCPoint(0.f, 0.f);
       myGL->m_fields->prevCam = CCPoint(0.f, 0.f);
       if (myGL->m_fields->m_fakePlayer1) {
+        myGL->m_fields->m_fakePlayer1->removeFromParentAndCleanup(true);
         myGL->m_fields->m_fakePlayer1->release();
         myGL->m_fields->m_fakePlayer1 = nullptr;
       }
       if (myGL->m_fields->m_fakePlayer2) {
+        myGL->m_fields->m_fakePlayer2->removeFromParentAndCleanup(true);
         myGL->m_fields->m_fakePlayer2->release();
         myGL->m_fields->m_fakePlayer2 = nullptr;
       }
