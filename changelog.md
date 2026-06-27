@@ -1,3 +1,7 @@
+# 2.2.0
+- Fixed camera trigger overshooting by calling actual game's updateCamera function and restoring state in physics tick.
+- Fixed player overshooting when player hits speed portals.
+
 # 2.1.1
 - Fixed a crash on level reset by reusing fake player objects instead of recreating them.
 

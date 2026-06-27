@@ -16,6 +16,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -148,17 +149,98 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
 static bool isFakePlayer(PlayerObject *player);
 
 class $modify(MyBGL, GJBaseGameLayer) {
+  struct CameraState {
+    float cameraFlip;
+    float cameraWidthOffset;
+    float cameraHeightOffset;
+    float cameraUnzoomedHeightOffset;
+    float targetCameraHeightOffset;
+    bool calculateTargetHeightOffset;
+    bool staticCameraShake;
+    bool skipCameraShake;
+    float cameraWidth;
+    float cameraHeight;
+    float cameraUnzoomedX;
+    float halfCameraWidth;
+    float unk31f8;
+    bool unk322a;
+  };
+
+  CameraState saveCameraState() {
+    CameraState state;
+    state.cameraFlip = m_cameraFlip;
+    state.cameraWidthOffset = m_cameraWidthOffset;
+    state.cameraHeightOffset = m_cameraHeightOffset;
+    state.cameraUnzoomedHeightOffset = m_cameraUnzoomedHeightOffset;
+    state.targetCameraHeightOffset = m_targetCameraHeightOffset;
+    state.calculateTargetHeightOffset = m_calculateTargetHeightOffset;
+    state.staticCameraShake = m_staticCameraShake;
+    state.skipCameraShake = m_skipCameraShake;
+    state.cameraWidth = m_cameraWidth;
+    state.cameraHeight = m_cameraHeight;
+    state.cameraUnzoomedX = m_cameraUnzoomedX;
+    state.halfCameraWidth = m_halfCameraWidth;
+    state.unk31f8 = m_unk31f8;
+    state.unk322a = m_unk322a;
+    return state;
+  }
+
+  void restoreCameraState(const CameraState &state) {
+    m_cameraFlip = state.cameraFlip;
+    m_cameraWidthOffset = state.cameraWidthOffset;
+    m_cameraHeightOffset = state.cameraHeightOffset;
+    m_cameraUnzoomedHeightOffset = state.cameraUnzoomedHeightOffset;
+    m_targetCameraHeightOffset = state.targetCameraHeightOffset;
+    m_calculateTargetHeightOffset = state.calculateTargetHeightOffset;
+    m_staticCameraShake = state.staticCameraShake;
+    m_skipCameraShake = state.skipCameraShake;
+    m_cameraWidth = state.cameraWidth;
+    m_cameraHeight = state.cameraHeight;
+    m_cameraUnzoomedX = state.cameraUnzoomedX;
+    m_halfCameraWidth = state.halfCameraWidth;
+    m_unk31f8 = state.unk31f8;
+    m_unk322a = state.unk322a;
+  }
+
+  struct GroundState {
+    float x;
+    float y;
+    float scaleX;
+    float scaleY;
+    float rotation;
+    float offset;
+    float unk;
+  };
+
+  GroundState saveGroundState(GJGroundLayer *ground) {
+    GroundState state = {0};
+    if (ground) {
+      state.x = ground->getPositionX();
+      state.y = ground->getPositionY();
+      state.scaleX = ground->getScaleX();
+      state.scaleY = ground->getScaleY();
+      state.rotation = ground->getRotation();
+      state.offset = ground->m_ground1Offset;
+      state.unk = ground->m_unk1cc;
+    }
+    return state;
+  }
+
+  void restoreGroundState(GJGroundLayer *ground, const GroundState &state) {
+    if (ground) {
+      ground->setPositionX(state.x);
+      ground->setPositionY(state.y);
+      ground->setScaleX(state.scaleX);
+      ground->setScaleY(state.scaleY);
+      ground->setRotation(state.rotation);
+      ground->m_ground1Offset = state.offset;
+      ground->m_unk1cc = state.unk;
+    }
+  }
+
   struct Fields {
     PlayerState p1;
     PlayerState p2;
-    CCPoint lastCam = {0, 0};
-    CCPoint prevCam = {0, 0};
-
-    float lastCamScaleX = 1.0f;
-    float prevCamScaleX = 1.0f;
-    float lastCamScaleY = 1.0f;
-    float prevCamScaleY = 1.0f;
-
     std::vector<std::pair<CCNode *, float>> origGroundX;
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
@@ -248,14 +330,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;
 
-    CCPoint camBefore =
-        m_objectLayer ? m_objectLayer->getPosition() : CCPoint{0, 0};
-    float scaleXBefore = m_objectLayer ? m_objectLayer->getScaleX() : 1.0f;
-    float scaleYBefore = m_objectLayer ? m_objectLayer->getScaleY() : 1.0f;
-
     GJBaseGameLayer::update(dt);
 
-    bool ran = false;
     for (int i = 0; i < 2; ++i) {
       auto &state = (i == 0) ? m_fields->p1 : m_fields->p2;
       auto player = (i == 0) ? m_player1 : m_player2;
@@ -263,24 +339,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (state.steps > 0) {
           state.tickTime = state.lastDt;
           state.lastSteps = state.steps;
-          ran = true;
         } else {
           state.lastSteps = 0;
         }
       }
     }
-
-    if (ran && m_objectLayer) {
-      m_fields->lastCam = m_objectLayer->getPosition();
-      m_fields->prevCam = camBefore;
-      m_fields->lastCamScaleX = m_objectLayer->getScaleX();
-      m_fields->prevCamScaleX = scaleXBefore;
-      m_fields->lastCamScaleY = m_objectLayer->getScaleY();
-      m_fields->prevCamScaleY = scaleYBefore;
-    }
   }
 
   PlayerObject *createFakePlayer(bool isPlayer2) {
+
     auto player = PlayerObject::create(1, 1, this, this, true);
     if (player) {
       player->retain();
@@ -307,7 +374,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
                           ->getRunningScene()
                           ->getChildByType<PauseLayer>(0) != nullptr;
 
-    if (g_softToggle || isFlipping() || paused || isPlatformer) {
+    if (g_softToggle || paused || isPlatformer) {
       GJBaseGameLayer::visit();
       return;
     }
@@ -374,11 +441,58 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     CCPoint origObj = {0, 0};
     CCPoint camOff = {0, 0};
-    double camPct = 0;
     bool hasObj = m_objectLayer != nullptr;
 
-    if (hasObj)
+    float origObjScaleX = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
+    float origObjScaleY = m_objectLayer ? m_objectLayer->getScaleY() : 1.f;
+    float origP1ScaleX = m_player1 ? m_player1->getScaleX() : 1.f;
+    float origP1ScaleY = m_player1 ? m_player1->getScaleY() : 1.f;
+    float origP2ScaleX = m_player2 ? m_player2->getScaleX() : 1.f;
+    float origP2ScaleY = m_player2 ? m_player2->getScaleY() : 1.f;
+    float origGroundScaleX = m_groundLayer ? m_groundLayer->getScaleX() : 1.f;
+    float origGroundScaleY = m_groundLayer ? m_groundLayer->getScaleY() : 1.f;
+    float origGround2ScaleX =
+        m_groundLayer2 ? m_groundLayer2->getScaleX() : 1.f;
+    float origGround2ScaleY =
+        m_groundLayer2 ? m_groundLayer2->getScaleY() : 1.f;
+    float origGroundY = m_groundLayer ? m_groundLayer->getPositionY() : 0.f;
+    float origGround2Y = m_groundLayer2 ? m_groundLayer2->getPositionY() : 0.f;
+    GroundState groundState1 = saveGroundState(m_groundLayer);
+    GroundState groundState2 = saveGroundState(m_groundLayer2);
+
+    float origObjRot = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
+    float origGroundRot = m_groundLayer ? m_groundLayer->getRotation() : 0.f;
+    float origGround2Rot = m_groundLayer2 ? m_groundLayer2->getRotation() : 0.f;
+
+    if (hasObj) {
       origObj = m_objectLayer->getPosition();
+    }
+
+    CCPoint origBgPos = {0, 0};
+    float origBgScaleX = 1.0f;
+    float origBgScaleY = 1.0f;
+    float origBgRot = 0.0f;
+    bool hasBg = m_background != nullptr;
+    if (hasBg) {
+      origBgPos = m_background->getPosition();
+      origBgScaleX = m_background->getScaleX();
+      origBgScaleY = m_background->getScaleY();
+      origBgRot = m_background->getRotation();
+    }
+
+    m_fields->origGroundX.clear();
+    auto saveGroundRecursive = [&](auto &self, CCNode *node) -> void {
+      if (!node)
+        return;
+      m_fields->origGroundX.push_back({node, node->getPositionX()});
+      for (auto *child : CCArrayExt<CCNode *>(node->getChildren())) {
+        self(self, child);
+      }
+    };
+    if (m_groundLayer)
+      saveGroundRecursive(saveGroundRecursive, m_groundLayer);
+    if (m_groundLayer2)
+      saveGroundRecursive(saveGroundRecursive, m_groundLayer2);
 
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
     bool dead = m_playerDied || (m_player1 && m_player1->m_isDead) ||
@@ -472,15 +586,26 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         double dtSeconds = tCurrent - state.lastTime;
-        double maxDtSeconds = (state.lastDt > 0.0001f)
-                                  ? ((state.lastDt / 60.0f) / timeScale)
-                                  : 0.033;
+        if (dtSeconds < 0.0) {
+          dtSeconds = 0.0;
+        }
+        double maxDtSeconds = 0.0;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+          maxDtSeconds = state.lastTime - state.prevTime;
+        } else {
+          maxDtSeconds = (state.lastDt > 0.0001f)
+                             ? ((state.lastDt / 60.0f) / timeScale)
+                             : 0.033;
+        }
+        if (maxDtSeconds > 0.2) {
+          maxDtSeconds = 0.2;
+        }
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
         }
         double tCurrentClamped = state.lastTime + dtSeconds;
 
-        if (dtSeconds > 0.0 && dtSeconds < 2.0) {
+        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           std::vector<PlayerButtonCommand> pendingClicks;
           if (hasCBF) {
             bool isTwoPlayer =
@@ -515,16 +640,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           m_player1->CCNode::setPosition(
               m_fields->m_fakePlayer1->getPosition());
           m_player1->setRotation(m_fields->m_fakePlayer1->getRotation());
-
-          CCPoint camDisp = m_fields->lastCam - m_fields->prevCam;
-          if (maxDtSeconds > 0.0001) {
-            camPct = dtSeconds / maxDtSeconds;
-            if (camPct > 1.0)
-              camPct = 1.0;
-            if (camPct < 0.0)
-              camPct = 0.0;
-            camOff = camDisp * static_cast<float>(camPct);
-          }
         }
       }
     }
@@ -535,15 +650,26 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         double dtSeconds = tCurrent - state.lastTime;
-        double maxDtSeconds = (state.lastDt > 0.0001f)
-                                  ? ((state.lastDt / 60.0f) / timeScale)
-                                  : 0.033;
+        if (dtSeconds < 0.0) {
+          dtSeconds = 0.0;
+        }
+        double maxDtSeconds = 0.0;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+          maxDtSeconds = state.lastTime - state.prevTime;
+        } else {
+          maxDtSeconds = (state.lastDt > 0.0001f)
+                             ? ((state.lastDt / 60.0f) / timeScale)
+                             : 0.033;
+        }
+        if (maxDtSeconds > 0.2) {
+          maxDtSeconds = 0.2;
+        }
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
         }
         double tCurrentClamped = state.lastTime + dtSeconds;
 
-        if (dtSeconds > 0.0 && dtSeconds < 2.0) {
+        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           std::vector<PlayerButtonCommand> pendingClicks;
           if (hasCBF) {
             bool isTwoPlayer =
@@ -582,47 +708,91 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
+    float extrapolatedScaleX = origObjScaleX;
+    float extrapolatedScaleY = origObjScaleY;
+    float extrapolatedRot = origObjRot;
+    bool hasScaleChange = false;
+    bool hasRotChange = false;
+
+    if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
+      double tCurrent = getCurrentTimestamp();
+      double timeScale = m_gameState.m_timeWarp;
+      double dtSeconds = tCurrent - m_fields->p1.lastTime;
+      if (dtSeconds < 0.0) {
+        dtSeconds = 0.0;
+      }
+      double maxDtSeconds = 0.0;
+      if (m_fields->p1.prevTime > 0.0001 &&
+          m_fields->p1.lastTime > m_fields->p1.prevTime) {
+        maxDtSeconds = m_fields->p1.lastTime - m_fields->p1.prevTime;
+      } else {
+        maxDtSeconds = (m_fields->p1.lastDt > 0.0001f)
+                           ? ((m_fields->p1.lastDt / 60.0f) / timeScale)
+                           : 0.033;
+      }
+      if (maxDtSeconds > 0.2) {
+        maxDtSeconds = 0.2;
+      }
+      if (dtSeconds > maxDtSeconds) {
+        dtSeconds = maxDtSeconds;
+      }
+
+      if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+        PlayerObject *origRealP1 = m_player1;
+        PlayerObject *origRealP2 = m_player2;
+        if (m_fields->m_fakePlayer1)
+          m_player1 = m_fields->m_fakePlayer1;
+        if (m_fields->m_fakePlayer2)
+          m_player2 = m_fields->m_fakePlayer2;
+
+        CameraState camState = saveCameraState();
+
+        double warpedDt = dtSeconds * timeScale;
+        playLayer->updateCamera(static_cast<float>(warpedDt));
+
+        camOff = m_objectLayer->getPosition() - origObj;
+        extrapolatedScaleX = m_objectLayer->getScaleX();
+        extrapolatedScaleY = m_objectLayer->getScaleY();
+        extrapolatedRot = m_objectLayer->getRotation();
+
+        hasScaleChange = (extrapolatedScaleX != origObjScaleX ||
+                          extrapolatedScaleY != origObjScaleY);
+        hasRotChange = (extrapolatedRot != origObjRot);
+
+        restoreCameraState(camState);
+
+        m_player1 = origRealP1;
+        m_player2 = origRealP2;
+      }
+    }
+
     if (hasObj && camOff != CCPoint{0, 0}) {
       m_objectLayer->setPosition(origObj + camOff);
     }
 
-    float factorX = 1.0f;
-    float factorY = 1.0f;
-    if (m_fields->lastCamScaleX != 0.0f) {
-      float interpolatedCamScaleX =
-          m_fields->prevCamScaleX +
-          (m_fields->lastCamScaleX - m_fields->prevCamScaleX) *
-              static_cast<float>(camPct);
-      factorX = interpolatedCamScaleX / m_fields->lastCamScaleX;
-    }
-    if (m_fields->lastCamScaleY != 0.0f) {
-      float interpolatedCamScaleY =
-          m_fields->prevCamScaleY +
-          (m_fields->lastCamScaleY - m_fields->prevCamScaleY) *
-              static_cast<float>(camPct);
-      factorY = interpolatedCamScaleY / m_fields->lastCamScaleY;
-    }
-
-    float origObjScaleX = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
-    float origObjScaleY = m_objectLayer ? m_objectLayer->getScaleY() : 1.f;
-    float origP1ScaleX = m_player1 ? m_player1->getScaleX() : 1.f;
-    float origP1ScaleY = m_player1 ? m_player1->getScaleY() : 1.f;
-    float origP2ScaleX = m_player2 ? m_player2->getScaleX() : 1.f;
-    float origP2ScaleY = m_player2 ? m_player2->getScaleY() : 1.f;
-    float origGroundScaleX = m_groundLayer ? m_groundLayer->getScaleX() : 1.f;
-    float origGroundScaleY = m_groundLayer ? m_groundLayer->getScaleY() : 1.f;
-    float origGround2ScaleX =
-        m_groundLayer2 ? m_groundLayer2->getScaleX() : 1.f;
-    float origGround2ScaleY =
-        m_groundLayer2 ? m_groundLayer2->getScaleY() : 1.f;
-    float origGroundY = m_groundLayer ? m_groundLayer->getPositionY() : 0.f;
-    float origGround2Y = m_groundLayer2 ? m_groundLayer2->getPositionY() : 0.f;
-
-    bool hasScaleChange = (factorX != 1.0f || factorY != 1.0f);
-    if (hasScaleChange) {
+    if (hasRotChange) {
       if (m_objectLayer) {
-        m_objectLayer->setScaleX(origObjScaleX * factorX);
-        m_objectLayer->setScaleY(origObjScaleY * factorY);
+        m_objectLayer->setRotation(extrapolatedRot);
+      }
+      if (m_groundLayer) {
+        m_groundLayer->setRotation(extrapolatedRot);
+      }
+      if (m_groundLayer2) {
+        m_groundLayer2->setRotation(extrapolatedRot);
+      }
+    }
+
+    if (hasScaleChange) {
+      float factorX = 1.0f;
+      float factorY = 1.0f;
+      if (origObjScaleX != 0.0f)
+        factorX = extrapolatedScaleX / origObjScaleX;
+      if (origObjScaleY != 0.0f)
+        factorY = extrapolatedScaleY / origObjScaleY;
+
+      if (m_objectLayer) {
+        m_objectLayer->setScaleX(extrapolatedScaleX);
+        m_objectLayer->setScaleY(extrapolatedScaleY);
       }
       if (m_player1) {
         m_player1->setScaleX(origP1ScaleX * factorX);
@@ -642,25 +812,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
-    m_fields->origGroundX.clear();
-    auto shiftGround = [&](GJGroundLayer *ground, float shift) {
-      if (!ground)
-        return;
-      for (auto *child : CCArrayExt<CCNode *>(ground->getChildren())) {
-        if (geode::cast::typeinfo_cast<CCSpriteBatchNode *>(child)) {
-          m_fields->origGroundX.push_back({child, child->getPositionX()});
-          child->setPositionX(child->getPositionX() + shift);
-        }
-      }
-    };
-
     if (!dead && hasP1 && m_fields->p1.lastTime != 0 &&
         camOff != CCPoint{0, 0}) {
-      float move = m_fields->lastCam.x - m_fields->prevCam.x;
-      float shift = move * xSign * static_cast<float>(camPct);
-      shiftGround(m_groundLayer, shift);
-      shiftGround(m_groundLayer2, shift);
-
       if (m_groundLayer) {
         m_groundLayer->setPositionY(origGroundY + camOff.y);
       }
@@ -727,14 +880,27 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj && camOff != CCPoint{0, 0}) {
       m_objectLayer->setPosition(origObj);
     }
+    if (hasRotChange) {
+      if (m_objectLayer) {
+        m_objectLayer->setRotation(origObjRot);
+      }
+      if (m_groundLayer) {
+        m_groundLayer->setRotation(origGroundRot);
+      }
+      if (m_groundLayer2) {
+        m_groundLayer2->setRotation(origGround2Rot);
+      }
+    }
     for (const auto &[node, x] : m_fields->origGroundX) {
       node->setPositionX(x);
     }
-    if (m_groundLayer) {
-      m_groundLayer->setPositionY(origGroundY);
-    }
-    if (m_groundLayer2) {
-      m_groundLayer2->setPositionY(origGround2Y);
+    restoreGroundState(m_groundLayer, groundState1);
+    restoreGroundState(m_groundLayer2, groundState2);
+    if (hasBg) {
+      m_background->setPosition(origBgPos);
+      m_background->setScaleX(origBgScaleX);
+      m_background->setScaleY(origBgScaleY);
+      m_background->setRotation(origBgRot);
     }
     m_playerDied = origPlayerDied;
 
@@ -742,6 +908,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasEffectManager) {
       m_effectManager->loadFromState(ems);
     }
+
+    m_fields->p1.steps = 0;
+    m_fields->p2.steps = 0;
   }
 };
 
@@ -918,8 +1087,6 @@ class $modify(MyPlayLayer, PlayLayer) {
     if (myGL) {
       myGL->m_fields->p1 = PlayerState();
       myGL->m_fields->p2 = PlayerState();
-      myGL->m_fields->lastCam = CCPoint(0.f, 0.f);
-      myGL->m_fields->prevCam = CCPoint(0.f, 0.f);
     }
   }
 

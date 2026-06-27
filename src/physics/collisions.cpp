@@ -619,21 +619,29 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 void triggerObject(EffectGameObject *object, GJBaseGameLayer *pl,
                    PlayerObject *player) {
   auto bot = Bot::get();
+  bool isFake = (bot->trajectory().unsafeInner()->m_fakePlayer1 == player ||
+                 bot->trajectory().unsafeInner()->m_fakePlayer2 == player);
+
   switch (object->m_objectID) {
   case 200:
-    *(float *)(&pl->m_gameState.m_timeModRelated) = 0.7;
+    if (!isFake)
+      *(float *)(&pl->m_gameState.m_timeModRelated) = 0.7;
     break;
   case 201:
-    *(float *)(&pl->m_gameState.m_timeModRelated) = 0.9;
+    if (!isFake)
+      *(float *)(&pl->m_gameState.m_timeModRelated) = 0.9;
     break;
   case 202:
-    *(float *)(&pl->m_gameState.m_timeModRelated) = 1.1;
+    if (!isFake)
+      *(float *)(&pl->m_gameState.m_timeModRelated) = 1.1;
     break;
   case 203:
-    *(float *)(&pl->m_gameState.m_timeModRelated) = 1.3;
+    if (!isFake)
+      *(float *)(&pl->m_gameState.m_timeModRelated) = 1.3;
     break;
   case 1334:
-    *(float *)(&pl->m_gameState.m_timeModRelated) = 1.6;
+    if (!isFake)
+      *(float *)(&pl->m_gameState.m_timeModRelated) = 1.6;
     break;
   case 2066: {
     if (object->m_followCPP) {
