@@ -71,6 +71,7 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
 
   fake->setPosition(real->getPosition());
   fake->setRotation(real->getRotation());
+  fake->m_position = real->m_position;
 
   fake->m_yVelocity = real->m_yVelocity;
   fake->m_platformerXVelocity = real->m_platformerXVelocity;
@@ -428,12 +429,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
     Bot::get()->trajectory().deactivateAllRemembered();
 
     CCPoint origP1 = {0, 0};
+    CCPoint origP1Rob = {0, 0};
     int origTrailCount1 = 0;
     CCPoint origCurrentPoint1 = {0, 0};
     bool hasTrail1 = false;
     bool simulatedP1 = false;
 
     CCPoint origP2 = {0, 0};
+    CCPoint origP2Rob = {0, 0};
     int origTrailCount2 = 0;
     CCPoint origCurrentPoint2 = {0, 0};
     bool hasTrail2 = false;
@@ -620,6 +623,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
 
           origP1 = m_player1->getPosition();
+          origP1Rob = m_player1->m_position;
 
           hasTrail1 = m_player1->m_waveTrail != nullptr;
           if (hasTrail1) {
@@ -636,6 +640,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player1->CCNode::setPosition(
               m_fields->m_fakePlayer1->getPosition());
+          m_player1->m_position = m_fields->m_fakePlayer1->m_position;
         }
       }
     }
@@ -684,6 +689,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
 
           origP2 = m_player2->getPosition();
+          origP2Rob = m_player2->m_position;
 
           hasTrail2 = m_player2->m_waveTrail != nullptr;
           if (hasTrail2) {
@@ -700,6 +706,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player2->CCNode::setPosition(
               m_fields->m_fakePlayer2->getPosition());
+          m_player2->m_position = m_fields->m_fakePlayer2->m_position;
         }
       }
     }
@@ -744,10 +751,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
         cameraExtrapolated = true;
 
         double warpedDt = dtSeconds * timeScale;
-        playLayer->updateCamera(static_cast<float>(warpedDt));
+        float dtFloat = static_cast<float>(warpedDt);
+        playLayer->m_gameState.updateTweenActions(dtFloat);
+
+        playLayer->updateCamera(dtFloat);
 
         camOff = m_objectLayer->getPosition() - origObj;
-        camOff.y = 0.0f;
         extrapolatedScaleX = m_objectLayer->getScaleX();
         extrapolatedScaleY = m_objectLayer->getScaleY();
         extrapolatedRot = m_objectLayer->getRotation();
@@ -845,6 +854,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && simulatedP1) {
       m_player1->CCNode::setPosition(origP1);
+      m_player1->m_position = origP1Rob;
 
       if (hasTrail1) {
         m_player1->m_waveTrail->m_currentPoint = origCurrentPoint1;
@@ -859,6 +869,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     if (hasP2 && simulatedP2) {
       m_player2->CCNode::setPosition(origP2);
+      m_player2->m_position = origP2Rob;
 
       if (hasTrail2) {
         m_player2->m_waveTrail->m_currentPoint = origCurrentPoint2;

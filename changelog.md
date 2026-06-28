@@ -1,3 +1,6 @@
+# 2.2.4
+- Added extrapolation for camera offset and zoom triggers and etc.
+
 # 2.2.3
 - Fixed stuck input (autojump/remains pressed) bugs when resetting/restarting levels.
 - Disabled player rotation extrapolation entirely to prevent bugs.
