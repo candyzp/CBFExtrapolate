@@ -1,3 +1,6 @@
+# 2.2.2
+- Optimized and cleaned up internal extrapolation code.
+
 # 2.2.1
 - Fixed mirror portal issue (probably).
 - Fixed player stuttering/jittering under low game speed warp settings (e.g. 0.25x).

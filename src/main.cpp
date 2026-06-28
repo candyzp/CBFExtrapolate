@@ -428,7 +428,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     Bot::get()->trajectory().deactivateAllRemembered();
 
     CCPoint origP1 = {0, 0};
-    CCPoint origP1Rob = {0, 0};
     float origR1 = 0.0f;
     int origTrailCount1 = 0;
     CCPoint origCurrentPoint1 = {0, 0};
@@ -436,7 +435,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool simulatedP1 = false;
 
     CCPoint origP2 = {0, 0};
-    CCPoint origP2Rob = {0, 0};
     float origR2 = 0.0f;
     int origTrailCount2 = 0;
     CCPoint origCurrentPoint2 = {0, 0};
@@ -628,7 +626,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
 
           origP1 = m_player1->getPosition();
-          origP1Rob = m_player1->m_position;
           origR1 = m_player1->getRotation();
 
           hasTrail1 = m_player1->m_waveTrail != nullptr;
@@ -646,7 +643,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player1->CCNode::setPosition(
               m_fields->m_fakePlayer1->getPosition());
-          m_player1->m_position = m_fields->m_fakePlayer1->m_position;
           m_player1->setRotation(m_fields->m_fakePlayer1->getRotation());
         }
       }
@@ -696,7 +692,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
 
           origP2 = m_player2->getPosition();
-          origP2Rob = m_player2->m_position;
           origR2 = m_player2->getRotation();
 
           hasTrail2 = m_player2->m_waveTrail != nullptr;
@@ -714,7 +709,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player2->CCNode::setPosition(
               m_fields->m_fakePlayer2->getPosition());
-          m_player2->m_position = m_fields->m_fakePlayer2->m_position;
           m_player2->setRotation(m_fields->m_fakePlayer2->getRotation());
         }
       }
@@ -861,7 +855,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && simulatedP1) {
       m_player1->CCNode::setPosition(origP1);
-      m_player1->m_position = origP1Rob;
       m_player1->setRotation(origR1);
 
       if (hasTrail1) {
@@ -877,7 +870,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     if (hasP2 && simulatedP2) {
       m_player2->CCNode::setPosition(origP2);
-      m_player2->m_position = origP2Rob;
       m_player2->setRotation(origR2);
 
       if (hasTrail2) {
