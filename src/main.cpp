@@ -242,7 +242,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
   struct Fields {
     PlayerState p1;
     PlayerState p2;
-    std::vector<std::pair<CCNode *, float>> origGroundX;
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
 
@@ -382,12 +381,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
-    GJGameState origState = m_gameState;
-    EffectManagerState ems;
-    bool hasEffectManager = (m_effectManager != nullptr);
-    if (hasEffectManager) {
-      m_effectManager->saveToState(ems);
-    }
+    auto origTweenActions = m_gameState.m_tweenActions;
+    auto origCameraOffset = m_gameState.m_cameraOffset;
+    auto origCameraZoom = m_gameState.m_cameraZoom;
+    auto origCameraAngle = m_gameState.m_cameraAngle;
 
     bool hasCBF = false;
     if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
@@ -482,20 +479,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
       origBgScaleY = m_background->getScaleY();
       origBgRot = m_background->getRotation();
     }
-
-    m_fields->origGroundX.clear();
-    auto saveGroundRecursive = [&](auto &self, CCNode *node) -> void {
-      if (!node)
-        return;
-      m_fields->origGroundX.push_back({node, node->getPositionX()});
-      for (auto *child : CCArrayExt<CCNode *>(node->getChildren())) {
-        self(self, child);
-      }
-    };
-    if (m_groundLayer)
-      saveGroundRecursive(saveGroundRecursive, m_groundLayer);
-    if (m_groundLayer2)
-      saveGroundRecursive(saveGroundRecursive, m_groundLayer2);
 
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
     bool dead = m_playerDied || (m_player1 && m_player1->m_isDead) ||
@@ -896,9 +879,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_groundLayer2->setRotation(origGround2Rot);
       }
     }
-    for (const auto &[node, x] : m_fields->origGroundX) {
-      node->setPositionX(x);
-    }
+
     restoreGroundState(m_groundLayer, groundState1);
     restoreGroundState(m_groundLayer2, groundState2);
     if (hasBg) {
@@ -909,10 +890,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     m_playerDied = origPlayerDied;
 
-    m_gameState = origState;
-    if (hasEffectManager) {
-      m_effectManager->loadFromState(ems);
-    }
+    m_gameState.m_tweenActions = origTweenActions;
+    m_gameState.m_cameraOffset = origCameraOffset;
+    m_gameState.m_cameraZoom = origCameraZoom;
+    m_gameState.m_cameraAngle = origCameraAngle;
 
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;

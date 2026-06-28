@@ -1,3 +1,6 @@
+# 2.2.5
+- Fixed game crashes occurring when resetting levels, players dying, or changing Startpos.
+
 # 2.2.4
 - Added extrapolation for camera offset and zoom triggers and etc.
 
