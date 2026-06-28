@@ -374,7 +374,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
                           ->getRunningScene()
                           ->getChildByType<PauseLayer>(0) != nullptr;
 
-    if (g_softToggle || paused || isPlatformer) {
+    bool flipping = playLayer->isFlipping();
+
+    if (g_softToggle || paused || isPlatformer || flipping) {
       GJBaseGameLayer::visit();
       return;
     }
@@ -426,6 +428,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     Bot::get()->trajectory().deactivateAllRemembered();
 
     CCPoint origP1 = {0, 0};
+    CCPoint origP1Rob = {0, 0};
     float origR1 = 0.0f;
     int origTrailCount1 = 0;
     CCPoint origCurrentPoint1 = {0, 0};
@@ -433,6 +436,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool simulatedP1 = false;
 
     CCPoint origP2 = {0, 0};
+    CCPoint origP2Rob = {0, 0};
     float origR2 = 0.0f;
     int origTrailCount2 = 0;
     CCPoint origCurrentPoint2 = {0, 0};
@@ -585,6 +589,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+            state.lastDt > 0.0001f) {
+          timeScale =
+              (state.lastDt / 60.0f) / (state.lastTime - state.prevTime);
+        }
         double dtSeconds = tCurrent - state.lastTime;
         if (dtSeconds < 0.0) {
           dtSeconds = 0.0;
@@ -594,11 +603,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           maxDtSeconds = state.lastTime - state.prevTime;
         } else {
           maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? ((state.lastDt / 60.0f) / timeScale)
+                             ? (state.lastDt / 60.0f / timeScale)
                              : 0.033;
-        }
-        if (maxDtSeconds > 0.2) {
-          maxDtSeconds = 0.2;
         }
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
@@ -622,6 +628,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
 
           origP1 = m_player1->getPosition();
+          origP1Rob = m_player1->m_position;
           origR1 = m_player1->getRotation();
 
           hasTrail1 = m_player1->m_waveTrail != nullptr;
@@ -639,6 +646,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player1->CCNode::setPosition(
               m_fields->m_fakePlayer1->getPosition());
+          m_player1->m_position = m_fields->m_fakePlayer1->m_position;
           m_player1->setRotation(m_fields->m_fakePlayer1->getRotation());
         }
       }
@@ -649,6 +657,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+            state.lastDt > 0.0001f) {
+          timeScale =
+              (state.lastDt / 60.0f) / (state.lastTime - state.prevTime);
+        }
         double dtSeconds = tCurrent - state.lastTime;
         if (dtSeconds < 0.0) {
           dtSeconds = 0.0;
@@ -658,11 +671,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           maxDtSeconds = state.lastTime - state.prevTime;
         } else {
           maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? ((state.lastDt / 60.0f) / timeScale)
+                             ? (state.lastDt / 60.0f / timeScale)
                              : 0.033;
-        }
-        if (maxDtSeconds > 0.2) {
-          maxDtSeconds = 0.2;
         }
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
@@ -686,6 +696,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
 
           origP2 = m_player2->getPosition();
+          origP2Rob = m_player2->m_position;
           origR2 = m_player2->getRotation();
 
           hasTrail2 = m_player2->m_waveTrail != nullptr;
@@ -703,10 +714,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player2->CCNode::setPosition(
               m_fields->m_fakePlayer2->getPosition());
+          m_player2->m_position = m_fields->m_fakePlayer2->m_position;
           m_player2->setRotation(m_fields->m_fakePlayer2->getRotation());
         }
       }
     }
+
+    bool cameraExtrapolated = false;
+    CameraState camState;
 
     float extrapolatedScaleX = origObjScaleX;
     float extrapolatedScaleY = origObjScaleY;
@@ -717,6 +732,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
       double timeScale = m_gameState.m_timeWarp;
+      if (m_fields->p1.prevTime > 0.0001 &&
+          m_fields->p1.lastTime > m_fields->p1.prevTime &&
+          m_fields->p1.lastDt > 0.0001f) {
+        timeScale = (m_fields->p1.lastDt / 60.0f) /
+                    (m_fields->p1.lastTime - m_fields->p1.prevTime);
+      }
       double dtSeconds = tCurrent - m_fields->p1.lastTime;
       if (dtSeconds < 0.0) {
         dtSeconds = 0.0;
@@ -727,30 +748,22 @@ class $modify(MyBGL, GJBaseGameLayer) {
         maxDtSeconds = m_fields->p1.lastTime - m_fields->p1.prevTime;
       } else {
         maxDtSeconds = (m_fields->p1.lastDt > 0.0001f)
-                           ? ((m_fields->p1.lastDt / 60.0f) / timeScale)
+                           ? (m_fields->p1.lastDt / 60.0f / timeScale)
                            : 0.033;
-      }
-      if (maxDtSeconds > 0.2) {
-        maxDtSeconds = 0.2;
       }
       if (dtSeconds > maxDtSeconds) {
         dtSeconds = maxDtSeconds;
       }
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-        PlayerObject *origRealP1 = m_player1;
-        PlayerObject *origRealP2 = m_player2;
-        if (m_fields->m_fakePlayer1)
-          m_player1 = m_fields->m_fakePlayer1;
-        if (m_fields->m_fakePlayer2)
-          m_player2 = m_fields->m_fakePlayer2;
-
-        CameraState camState = saveCameraState();
+        camState = saveCameraState();
+        cameraExtrapolated = true;
 
         double warpedDt = dtSeconds * timeScale;
         playLayer->updateCamera(static_cast<float>(warpedDt));
 
         camOff = m_objectLayer->getPosition() - origObj;
+        camOff.y = 0.0f;
         extrapolatedScaleX = m_objectLayer->getScaleX();
         extrapolatedScaleY = m_objectLayer->getScaleY();
         extrapolatedRot = m_objectLayer->getRotation();
@@ -758,11 +771,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
         hasScaleChange = (extrapolatedScaleX != origObjScaleX ||
                           extrapolatedScaleY != origObjScaleY);
         hasRotChange = (extrapolatedRot != origObjRot);
-
-        restoreCameraState(camState);
-
-        m_player1 = origRealP1;
-        m_player2 = origRealP2;
       }
     }
 
@@ -824,6 +832,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     GJBaseGameLayer::visit();
 
+    if (cameraExtrapolated) {
+      restoreCameraState(camState);
+    }
+
     if (hasScaleChange) {
       if (m_objectLayer) {
         m_objectLayer->setScaleX(origObjScaleX);
@@ -849,6 +861,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && simulatedP1) {
       m_player1->CCNode::setPosition(origP1);
+      m_player1->m_position = origP1Rob;
       m_player1->setRotation(origR1);
 
       if (hasTrail1) {
@@ -864,6 +877,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     if (hasP2 && simulatedP2) {
       m_player2->CCNode::setPosition(origP2);
+      m_player2->m_position = origP2Rob;
       m_player2->setRotation(origR2);
 
       if (hasTrail2) {

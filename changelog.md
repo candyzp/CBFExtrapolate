@@ -1,3 +1,7 @@
+# 2.2.1
+- Fixed mirror portal issue (probably).
+- Fixed player stuttering/jittering under low game speed warp settings (e.g. 0.25x).
+
 # 2.2.0
 - Fixed camera trigger overshooting by calling actual game's updateCamera function and restoring state in physics tick.
 - Fixed player overshooting when player hits speed portals.
