@@ -735,7 +735,25 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         double warpedDt = dtSeconds * timeScale;
         float dtFloat = static_cast<float>(warpedDt);
+        auto origTweenActionsCopy = playLayer->m_gameState.m_tweenActions;
+        gd::unordered_map<int, GJValueTween> filteredTweens;
+        for (const auto &[actionID, tween] : origTweenActionsCopy) {
+          // 10: Static Camera X
+          // 11: Static Camera Y
+          // 14: Camera Zoom
+          // 15: Camera Offset X
+          // 16: Camera Offset Y
+          // 17: Camera Rotation
+          if (actionID == 10 || actionID == 11 || actionID == 14 ||
+              actionID == 15 || actionID == 16 || actionID == 17) {
+            filteredTweens[actionID] = tween;
+          }
+        }
+        playLayer->m_gameState.m_tweenActions = filteredTweens;
+
         playLayer->m_gameState.updateTweenActions(dtFloat);
+
+        playLayer->m_gameState.m_tweenActions = origTweenActionsCopy;
 
         playLayer->updateCamera(dtFloat);
 
@@ -1073,7 +1091,6 @@ class $modify(MyPlayLayer, PlayLayer) {
     if (myGL) {
       myGL->m_fields->p1 = PlayerState();
       myGL->m_fields->p2 = PlayerState();
-      myGL->m_queuedButtons.clear();
 
       if (myGL->m_fields->m_fakePlayer1) {
         myGL->m_fields->m_fakePlayer1->release();

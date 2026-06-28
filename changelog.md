@@ -1,3 +1,8 @@
+# 2.2.6
+- Fixed physics-affecting camera tween bugs that caused object misalignments.
+- Fixed temporary blur/shader effect glitches occurring on restarting attempts.
+- Fixed practice mode and startpos input buffering/hold click bugs by preserving queued inputs across attempts.
+
 # 2.2.5
 - Fixed game crashes occurring when resetting levels, players dying, or changing Startpos.
 
