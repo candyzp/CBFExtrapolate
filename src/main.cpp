@@ -428,14 +428,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
     Bot::get()->trajectory().deactivateAllRemembered();
 
     CCPoint origP1 = {0, 0};
-    float origR1 = 0.0f;
     int origTrailCount1 = 0;
     CCPoint origCurrentPoint1 = {0, 0};
     bool hasTrail1 = false;
     bool simulatedP1 = false;
 
     CCPoint origP2 = {0, 0};
-    float origR2 = 0.0f;
     int origTrailCount2 = 0;
     CCPoint origCurrentPoint2 = {0, 0};
     bool hasTrail2 = false;
@@ -533,10 +531,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
               player->m_playEffects = false;
               player->update(delta);
 
-              player->m_unkUnused3 = player->getRotation();
-              player->updateRotation(delta);
-              player->m_shipRotation = player->getPosition();
-
               if (this->checkCollisions(player, delta, false) == 1) {
                 state.isDead = true;
                 break;
@@ -626,7 +620,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
 
           origP1 = m_player1->getPosition();
-          origR1 = m_player1->getRotation();
 
           hasTrail1 = m_player1->m_waveTrail != nullptr;
           if (hasTrail1) {
@@ -643,7 +636,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player1->CCNode::setPosition(
               m_fields->m_fakePlayer1->getPosition());
-          m_player1->setRotation(m_fields->m_fakePlayer1->getRotation());
         }
       }
     }
@@ -692,7 +684,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
 
           origP2 = m_player2->getPosition();
-          origR2 = m_player2->getRotation();
 
           hasTrail2 = m_player2->m_waveTrail != nullptr;
           if (hasTrail2) {
@@ -709,7 +700,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           m_player2->CCNode::setPosition(
               m_fields->m_fakePlayer2->getPosition());
-          m_player2->setRotation(m_fields->m_fakePlayer2->getRotation());
         }
       }
     }
@@ -855,7 +845,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && simulatedP1) {
       m_player1->CCNode::setPosition(origP1);
-      m_player1->setRotation(origR1);
 
       if (hasTrail1) {
         m_player1->m_waveTrail->m_currentPoint = origCurrentPoint1;
@@ -870,7 +859,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     if (hasP2 && simulatedP2) {
       m_player2->CCNode::setPosition(origP2);
-      m_player2->setRotation(origR2);
 
       if (hasTrail2) {
         m_player2->m_waveTrail->m_currentPoint = origCurrentPoint2;
@@ -1093,6 +1081,16 @@ class $modify(MyPlayLayer, PlayLayer) {
     if (myGL) {
       myGL->m_fields->p1 = PlayerState();
       myGL->m_fields->p2 = PlayerState();
+      myGL->m_queuedButtons.clear();
+
+      if (myGL->m_fields->m_fakePlayer1) {
+        myGL->m_fields->m_fakePlayer1->release();
+        myGL->m_fields->m_fakePlayer1 = nullptr;
+      }
+      if (myGL->m_fields->m_fakePlayer2) {
+        myGL->m_fields->m_fakePlayer2->release();
+        myGL->m_fields->m_fakePlayer2 = nullptr;
+      }
     }
   }
 

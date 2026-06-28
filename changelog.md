@@ -1,3 +1,7 @@
+# 2.2.3
+- Fixed stuck input (autojump/remains pressed) bugs when resetting/restarting levels.
+- Disabled player rotation extrapolation entirely to prevent bugs.
+
 # 2.2.2
 - Optimized and cleaned up internal extrapolation code.
 
