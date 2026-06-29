@@ -19,15 +19,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
-#include <mutex>
-#include <unordered_set>
 #include <vector>
-
-#ifdef GEODE_IS_WINDOWS
-#include <Geode/loader/Event.hpp>
-#include <Geode/utils/Keyboard.hpp>
-#endif
 
 using namespace geode::prelude;
 
@@ -244,6 +236,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerState p2;
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
+    bool m_enableSolidCollisions = true;
 
     ~Fields() {
       if (m_fakePlayer1) {
@@ -312,7 +305,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
     if (isFakePlayer(player)) {
-      phys::collisionCheckObjects(this, player, objects, length, dt);
+      phys::collisionCheckObjects(this, player, objects, length, dt,
+                                  m_fields->m_enableSolidCollisions);
     } else {
       GJBaseGameLayer::collisionCheckObjects(player, objects, length, dt);
     }
@@ -359,6 +353,94 @@ class $modify(MyBGL, GJBaseGameLayer) {
     return player;
   }
 
+  struct CameraSimulationResult {
+    cocos2d::CCPoint camOff;
+    float extrapolatedScaleX;
+    float extrapolatedScaleY;
+    float extrapolatedRot;
+    bool hasScaleChange;
+    bool hasRotChange;
+  };
+
+  CameraSimulationResult
+  simulateCamera(PlayLayer *playLayer, float dtFloat, bool simulatedP1,
+                 const cocos2d::CCPoint &origP1, float origObjScaleX,
+                 float origObjScaleY, float origObjRot, float origCameraZoom,
+                 float origCameraAngle) {
+    CameraSimulationResult result = {cocos2d::CCPoint{0, 0},
+                                     origObjScaleX,
+                                     origObjScaleY,
+                                     origObjRot,
+                                     false,
+                                     false};
+
+    float nextZoom = origCameraZoom;
+    float nextAngle = origCameraAngle;
+    float diffOffsetX = 0.f;
+    float diffOffsetY = 0.f;
+    float diffStaticX = 0.f;
+    float diffStaticY = 0.f;
+
+    bool hasTween10 = false;
+    bool hasTween11 = false;
+
+    for (const auto &[actionID, tween] :
+         playLayer->m_gameState.m_tweenActions) {
+      if (actionID == 10 || actionID == 11 || actionID == 12 ||
+          actionID == 13 || actionID == 14 || actionID == 15 ||
+          actionID == 16 || actionID == 17) {
+        GJValueTween temp = tween;
+        temp.step(dtFloat);
+
+        if (actionID == 10) {
+          diffStaticX = temp.m_currentValue - tween.m_currentValue;
+          hasTween10 = true;
+        }
+        if (actionID == 11) {
+          diffStaticY = temp.m_currentValue - tween.m_currentValue;
+          hasTween11 = true;
+        }
+        if (actionID == 14)
+          nextZoom = temp.m_currentValue;
+        if (actionID == 15) {
+          diffOffsetX = temp.m_currentValue - tween.m_currentValue;
+        }
+        if (actionID == 16) {
+          diffOffsetY = temp.m_currentValue - tween.m_currentValue;
+        }
+        if (actionID == 17)
+          nextAngle = temp.m_currentValue;
+      }
+    }
+
+    if (hasTween10 || hasTween11) {
+      result.camOff.x = -diffStaticX;
+      result.camOff.y = -diffStaticY;
+    } else {
+      cocos2d::CCPoint playerDiff = {0, 0};
+      if (simulatedP1) {
+        auto myGL =
+            static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(playLayer));
+        playerDiff = myGL->m_fields->m_fakePlayer1->getPosition() - origP1;
+      }
+      result.camOff.x = -playerDiff.x - diffOffsetX;
+      result.camOff.y = -diffOffsetY;
+    }
+
+    float zoomRatio = 1.0f;
+    if (nextZoom > 0.0001f) {
+      zoomRatio = origCameraZoom / nextZoom;
+    }
+    result.extrapolatedScaleX = origObjScaleX * zoomRatio;
+    result.extrapolatedScaleY = origObjScaleY * zoomRatio;
+    result.hasScaleChange = (nextZoom != origCameraZoom);
+
+    result.extrapolatedRot = origObjRot - (nextAngle - origCameraAngle);
+    result.hasRotChange = (nextAngle != origCameraAngle);
+
+    return result;
+  }
+
   void visit() override {
     auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
     if (!playLayer) {
@@ -385,6 +467,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     auto origCameraOffset = m_gameState.m_cameraOffset;
     auto origCameraZoom = m_gameState.m_cameraZoom;
     auto origCameraAngle = m_gameState.m_cameraAngle;
+    auto origCameraPosition = m_gameState.m_cameraPosition;
 
     bool hasCBF = false;
     if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
@@ -510,6 +593,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
               return;
             double remaining = dtFrames;
             double stepSize = 0.25;
+            double accumulated = 0.0;
+
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
               float delta = static_cast<float>(currentStep);
@@ -517,18 +602,25 @@ class $modify(MyBGL, GJBaseGameLayer) {
               player->m_playEffects = false;
               player->update(delta);
 
+              accumulated += currentStep;
+              if (accumulated >= 0.25) {
+                m_fields->m_enableSolidCollisions = true;
+                accumulated = 0.0;
+              } else {
+                m_fields->m_enableSolidCollisions = false;
+              }
+
               if (this->checkCollisions(player, delta, false) == 1) {
                 state.isDead = true;
                 break;
               }
-
               phys::checkSpawnObjects(this, player);
-              this->m_effectManager->postCollisionCheck();
 
               player->m_isDead = false;
-
               remaining -= currentStep;
             }
+
+            m_fields->m_enableSolidCollisions = true;
           };
 
           for (const auto &cmd : sortedClicks) {
@@ -621,9 +713,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-          m_player1->CCNode::setPosition(
-              m_fields->m_fakePlayer1->getPosition());
-          m_player1->m_position = m_fields->m_fakePlayer1->m_position;
+          if (!state.isDead) {
+            m_player1->CCNode::setPosition(
+                m_fields->m_fakePlayer1->getPosition());
+            m_player1->m_position = m_fields->m_fakePlayer1->m_position;
+          } else {
+            simulatedP1 = false;
+          }
         }
       }
     }
@@ -687,9 +783,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-          m_player2->CCNode::setPosition(
-              m_fields->m_fakePlayer2->getPosition());
-          m_player2->m_position = m_fields->m_fakePlayer2->m_position;
+          if (!state.isDead) {
+            m_player2->CCNode::setPosition(
+                m_fields->m_fakePlayer2->getPosition());
+            m_player2->m_position = m_fields->m_fakePlayer2->m_position;
+          } else {
+            simulatedP2 = false;
+          }
         }
       }
     }
@@ -736,35 +836,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double warpedDt = dtSeconds * timeScale;
         float dtFloat = static_cast<float>(warpedDt);
         auto origTweenActionsCopy = playLayer->m_gameState.m_tweenActions;
-        gd::unordered_map<int, GJValueTween> filteredTweens;
-        for (const auto &[actionID, tween] : origTweenActionsCopy) {
-          // 10: Static Camera X
-          // 11: Static Camera Y
-          // 14: Camera Zoom
-          // 15: Camera Offset X
-          // 16: Camera Offset Y
-          // 17: Camera Rotation
-          if (actionID == 10 || actionID == 11 || actionID == 14 ||
-              actionID == 15 || actionID == 16 || actionID == 17) {
-            filteredTweens[actionID] = tween;
-          }
-        }
-        playLayer->m_gameState.m_tweenActions = filteredTweens;
+        auto simResult = simulateCamera(
+            playLayer, dtFloat, simulatedP1, origP1, origObjScaleX,
+            origObjScaleY, origObjRot, origCameraZoom, origCameraAngle);
 
-        playLayer->m_gameState.updateTweenActions(dtFloat);
-
-        playLayer->m_gameState.m_tweenActions = origTweenActionsCopy;
-
-        playLayer->updateCamera(dtFloat);
-
-        camOff = m_objectLayer->getPosition() - origObj;
-        extrapolatedScaleX = m_objectLayer->getScaleX();
-        extrapolatedScaleY = m_objectLayer->getScaleY();
-        extrapolatedRot = m_objectLayer->getRotation();
-
-        hasScaleChange = (extrapolatedScaleX != origObjScaleX ||
-                          extrapolatedScaleY != origObjScaleY);
-        hasRotChange = (extrapolatedRot != origObjRot);
+        camOff = simResult.camOff;
+        extrapolatedScaleX = simResult.extrapolatedScaleX;
+        extrapolatedScaleY = simResult.extrapolatedScaleY;
+        extrapolatedRot = simResult.extrapolatedRot;
+        hasScaleChange = simResult.hasScaleChange;
+        hasRotChange = simResult.hasRotChange;
       }
     }
 
@@ -828,6 +909,30 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (cameraExtrapolated) {
       restoreCameraState(camState);
+
+      if (hasObj) {
+        m_objectLayer->setPosition(origObj);
+      }
+      if (hasRotChange) {
+        if (m_objectLayer) {
+          m_objectLayer->setRotation(origObjRot);
+        }
+        if (m_groundLayer) {
+          m_groundLayer->setRotation(origGroundRot);
+        }
+        if (m_groundLayer2) {
+          m_groundLayer2->setRotation(origGround2Rot);
+        }
+      }
+      if (!dead && hasP1 && m_fields->p1.lastTime != 0 &&
+          camOff != CCPoint{0, 0}) {
+        if (m_groundLayer) {
+          m_groundLayer->setPositionY(origGroundY);
+        }
+        if (m_groundLayer2) {
+          m_groundLayer2->setPositionY(origGround2Y);
+        }
+      }
     }
 
     if (hasScaleChange) {
@@ -1025,11 +1130,9 @@ class $modify(MyPlayer, PlayerObject) {
       myGL = static_cast<MyBGL *>(gameLayer);
     }
 
-    if (g_extrapolating || isFakePlayer(this)) {
+    if (isFakePlayer(this)) {
       PlayerObject::update(dt);
-      if (isFakePlayer(this)) {
-        this->m_isDead = false;
-      }
+      this->m_isDead = false;
       return;
     }
 

@@ -129,7 +129,7 @@ void bumpPlayerFromGJBGL(GJBaseGameLayer *pl, PlayerObject *player,
 
 void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
                            gd::vector<GameObject *> *objects, int objectCount,
-                           float dt);
+                           float dt, bool enableSolids = true);
 
 void triggerObject(EffectGameObject *obj, GJBaseGameLayer *pl,
                    PlayerObject *player);

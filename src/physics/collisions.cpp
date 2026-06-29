@@ -331,7 +331,7 @@ $execute {
 
 void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
                            gd::vector<GameObject *> *objects, int objectCount,
-                           float dt) {
+                           float dt, bool enableSolids) {
   if (objectCount <= 0)
     return;
 
@@ -360,6 +360,10 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     if (object->m_objectType == GameObjectType::Solid ||
         object->m_objectType == GameObjectType::Breakable) {
+      if (Bot::get()->trajectory().isFakePlayer(player) && !enableSolids) {
+        continue;
+      }
+
       if (pl->m_solidCollisionObjectsCount < pl->m_solidCollisionObjectsIndex) {
         pl->m_solidCollisionObjects.at(pl->m_solidCollisionObjectsCount) =
             object;
