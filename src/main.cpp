@@ -144,6 +144,20 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_isSpider = real->m_isSpider;
   fake->m_isSwing = real->m_isSwing;
   fake->m_playEffects = false;
+
+  fake->m_stateHitHead = real->m_stateHitHead;
+  fake->m_stateDartSlide = real->m_stateDartSlide;
+  fake->m_stateNoAutoJump = real->m_stateNoAutoJump;
+  fake->m_stateFlipGravity = real->m_stateFlipGravity;
+  fake->m_stateForce = real->m_stateForce;
+  fake->m_stateForceVector = real->m_stateForceVector;
+  fake->m_jumpPadRelated = real->m_jumpPadRelated;
+
+  fake->m_dashX = real->m_dashX;
+  fake->m_dashY = real->m_dashY;
+  fake->m_dashAngle = real->m_dashAngle;
+  fake->m_dashStartTime = real->m_dashStartTime;
+  fake->m_dashRing = real->m_dashRing;
 }
 
 static bool isFakePlayer(PlayerObject *player);
@@ -264,54 +278,54 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool unkBool32;
   };
 
-  SafeGameState saveSafeGameState() {
-    return {m_gameState.m_cameraPosition,
-            m_gameState.m_cameraOffset,
-            m_gameState.m_cameraZoom,
-            m_gameState.m_cameraAngle,
-            m_gameState.m_cameraPosition2,
-            m_gameState.m_cameraStepDiff,
-            m_gameState.m_unkFloat4,
-            m_gameState.m_unkBool20,
-            m_gameState.m_unkBool21,
-            m_gameState.m_unkPoint4,
-            m_gameState.m_unkPoint32,
-            m_gameState.m_unkUint13,
-            m_gameState.m_unkPoint34,
-            m_gameState.m_unkUint64_1,
-            m_gameState.m_unkPoint8,
-            m_gameState.m_unkPoint24,
-            m_gameState.m_unkPoint12,
-            m_gameState.m_unkPoint6,
-            m_gameState.m_unkPoint13,
-            m_gameState.m_unkPoint2,
-            m_gameState.m_unkPoint18,
-            m_gameState.m_unkPoint19,
-            m_gameState.m_unkPoint20,
-            m_gameState.m_unkPoint21,
-            m_gameState.m_unkPoint22,
-            m_gameState.m_unkPoint26,
-            m_gameState.m_unkPoint3,
-            m_gameState.m_unkPoint28,
-            m_gameState.m_unkPoint30,
-            m_gameState.m_unkInt12,
-            m_gameState.m_middleGroundOffsetY,
-            m_gameState.m_cameraShakeFactor,
-            m_gameState.m_unkBool1,
-            m_gameState.m_unkFloat2,
-            m_gameState.m_unkFloat3,
-            m_gameState.m_unkInt10,
-            m_gameState.m_unkInt11,
-            m_gameState.m_unkInt14,
-            m_gameState.m_unkBool7,
-            m_gameState.m_unkBool8,
-            m_gameState.m_unkBool9,
-            m_gameState.m_unkFloat9,
-            m_gameState.m_dualRelated,
-            m_gameState.m_activatedObjectIDs,
-            m_gameState.m_unkBool30,
-            m_gameState.m_unkBool31,
-            m_gameState.m_unkBool32};
+  void saveSafeGameState(SafeGameState &state) {
+    state.cameraPosition = m_gameState.m_cameraPosition;
+    state.cameraOffset = m_gameState.m_cameraOffset;
+    state.cameraZoom = m_gameState.m_cameraZoom;
+    state.cameraAngle = m_gameState.m_cameraAngle;
+    state.cameraPosition2 = m_gameState.m_cameraPosition2;
+    state.cameraStepDiff = m_gameState.m_cameraStepDiff;
+    state.unkFloat4 = m_gameState.m_unkFloat4;
+    state.unkBool20 = m_gameState.m_unkBool20;
+    state.unkBool21 = m_gameState.m_unkBool21;
+    state.unkPoint4 = m_gameState.m_unkPoint4;
+    state.unkPoint32 = m_gameState.m_unkPoint32;
+    state.unkUint13 = m_gameState.m_unkUint13;
+    state.unkPoint34 = m_gameState.m_unkPoint34;
+    state.unkUint64_1 = m_gameState.m_unkUint64_1;
+    state.unkPoint8 = m_gameState.m_unkPoint8;
+    state.unkPoint24 = m_gameState.m_unkPoint24;
+    state.unkPoint12 = m_gameState.m_unkPoint12;
+    state.unkPoint6 = m_gameState.m_unkPoint6;
+    state.unkPoint13 = m_gameState.m_unkPoint13;
+    state.unkPoint2 = m_gameState.m_unkPoint2;
+    state.unkPoint18 = m_gameState.m_unkPoint18;
+    state.unkPoint19 = m_gameState.m_unkPoint19;
+    state.unkPoint20 = m_gameState.m_unkPoint20;
+    state.unkPoint21 = m_gameState.m_unkPoint21;
+    state.unkPoint22 = m_gameState.m_unkPoint22;
+    state.unkPoint26 = m_gameState.m_unkPoint26;
+    state.unkPoint3 = m_gameState.m_unkPoint3;
+    state.unkPoint28 = m_gameState.m_unkPoint28;
+    state.unkPoint30 = m_gameState.m_unkPoint30;
+    state.unkInt12 = m_gameState.m_unkInt12;
+    state.middleGroundOffsetY = m_gameState.m_middleGroundOffsetY;
+    state.cameraShakeFactor = m_gameState.m_cameraShakeFactor;
+    state.unkBool1 = m_gameState.m_unkBool1;
+    state.unkFloat2 = m_gameState.m_unkFloat2;
+    state.unkFloat3 = m_gameState.m_unkFloat3;
+    state.unkInt10 = m_gameState.m_unkInt10;
+    state.unkInt11 = m_gameState.m_unkInt11;
+    state.unkInt14 = m_gameState.m_unkInt14;
+    state.unkBool7 = m_gameState.m_unkBool7;
+    state.unkBool8 = m_gameState.m_unkBool8;
+    state.unkBool9 = m_gameState.m_unkBool9;
+    state.unkFloat9 = m_gameState.m_unkFloat9;
+    state.dualRelated = m_gameState.m_dualRelated;
+    state.activatedObjectIDs = m_gameState.m_activatedObjectIDs;
+    state.unkBool30 = m_gameState.m_unkBool30;
+    state.unkBool31 = m_gameState.m_unkBool31;
+    state.unkBool32 = m_gameState.m_unkBool32;
   }
 
   void restoreSafeGameState(const SafeGameState &state) {
@@ -684,7 +698,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
-    bool dead = m_playerDied || (m_player1 && m_player1->m_isDead) ||
+    bool dead = (m_player1 && m_player1->m_isDead) ||
                 (m_player2 && m_player2->m_isDead);
 
     auto extrapolatePlayer =
@@ -769,7 +783,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
-      if (state.lastTime != 0 && !dead) {
+      if (state.lastTime != 0) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
@@ -837,7 +851,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
       auto &state = m_fields->p2;
-      if (state.lastTime != 0 && !dead) {
+      if (state.lastTime != 0) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
@@ -907,7 +921,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     CameraState camState;
     SafeGameState safeState;
 
-    if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
+    if (hasObj && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
       double timeScale = m_gameState.m_timeWarp;
       if (m_fields->p1.prevTime > 0.0001 &&
@@ -937,7 +951,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
         camState = saveCameraState();
-        safeState = saveSafeGameState();
+        saveSafeGameState(safeState);
         cameraExtrapolated = true;
 
         double warpedDt = dtSeconds * timeScale;
