@@ -1,3 +1,10 @@
+# 2.2.7
+- Expanded camera trigger extrapolation to include Static Camera, Camera Zoom, Camera Target, Gameplay Offset, and auxiliary target follow triggers.
+- Fully restored all modified camera states in SafeGameState to prevent state pollution.
+- Fixed a game freeze bug caused by division-by-near-zero in Player 1's extrapolation timeScale calculation.
+- Fixed player interpolation stutter/freeze under Noclip mode when clipping inside solid blocks or passing through walls.
+- Bypassed player simulation halts at wall impacts by enabling `ignoreDamage` natively during extrapolation.
+
 # 2.2.6
 - Fixed physics-affecting camera tween bugs that caused object misalignments.
 - Fixed temporary blur/shader effect glitches occurring on restarting attempts.

@@ -23,7 +23,9 @@ inline bool activatingPortal(GJBaseGameLayer *pl, PlayerObject *player,
       return false;
     }
 
-    pl->playerWillSwitchMode(player, portal);
+    if (!Bot::get()->trajectory().isFakePlayer(player)) {
+      pl->playerWillSwitchMode(player, portal);
+    }
 
     bool isTheSame =
         ((portal->m_objectType == GameObjectType::ShipPortal) &&
