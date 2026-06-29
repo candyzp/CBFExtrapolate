@@ -1,6 +1,7 @@
 # 2.2.8
 - Fixed a bug where crashing under Noclip (especially in Wave mode) would permanently disable extrapolation for the rest of the attempt.
 - implemented explicit copying of special block states (D-blocks, J-blocks, H-blocks, force blocks) and dash attributes during player state synchronization to natively support Wave sliding and other gameplay elements.
+
 # 2.2.7
 - Expanded camera trigger extrapolation to include Static Camera, Camera Zoom, Camera Target, Gameplay Offset, and auxiliary target follow triggers.
 - Fully restored all modified camera states in SafeGameState to prevent state pollution.
