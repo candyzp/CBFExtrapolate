@@ -9,28 +9,30 @@ using TimestampType = double;
 #include <Geode/Geode.hpp>
 
 inline LARGE_INTEGER freq = []() {
-    LARGE_INTEGER f;
-    QueryPerformanceFrequency(&f);
-    return f;
+  LARGE_INTEGER f;
+  QueryPerformanceFrequency(&f);
+  return f;
 }();
 
 inline bool linuxNative = []() {
-    if (geode::utils::platform::isWine()) {
-        if (auto m = geode::Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
-            return m->getSettingValue<bool>("wine-workaround");
-        }
+  if (geode::utils::platform::isWine()) {
+    if (auto m =
+            geode::Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
+      return m->getSettingValue<bool>("wine-workaround");
     }
-    return false;
+  }
+  return false;
 }();
 
 inline TimestampType getCurrentTimestamp() {
-	LARGE_INTEGER t;
-	if (linuxNative) {
-		GetSystemTimePreciseAsFileTime((FILETIME*)&t);
-	} else {
-		QueryPerformanceCounter(&t);
-	}
-	return static_cast<TimestampType>(t.QuadPart) / static_cast<TimestampType>(freq.QuadPart);
+  LARGE_INTEGER t;
+  if (linuxNative) {
+    GetSystemTimePreciseAsFileTime((FILETIME *)&t);
+  } else {
+    QueryPerformanceCounter(&t);
+  }
+  return static_cast<TimestampType>(t.QuadPart) /
+         static_cast<TimestampType>(freq.QuadPart);
 }
 
 #elif defined(GEODE_IS_ANDROID)
@@ -38,9 +40,9 @@ inline TimestampType getCurrentTimestamp() {
 #include <time.h>
 
 inline TimestampType getCurrentTimestamp() {
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	return (double)now.tv_sec + ((double)now.tv_nsec / 1'000'000'000.0);
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (double)now.tv_sec + ((double)now.tv_nsec / 1'000'000'000.0);
 }
 
 #elif defined(GEODE_IS_MACOS) || defined(GEODE_IS_IOS)
@@ -48,7 +50,7 @@ inline TimestampType getCurrentTimestamp() {
 #include <time.h>
 
 inline TimestampType getCurrentTimestamp() {
-	return (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1'000'000'000.0;
+  return (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1'000'000'000.0;
 }
 
 #endif

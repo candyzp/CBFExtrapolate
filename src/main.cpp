@@ -192,7 +192,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_cameraUnzoomedX = state.cameraUnzoomedX;
     m_halfCameraWidth = state.halfCameraWidth;
     m_unk31f8 = state.unk31f8;
-    m_unk322a = state.unk322a;
   }
 
   struct GroundState {
@@ -237,6 +236,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
     bool m_enableSolidCollisions = true;
+
+    cocos2d::CCPoint prevCam = {0, 0};
+    cocos2d::CCPoint lastCam = {0, 0};
+    float prevScale = 1.f;
+    float lastScale = 1.f;
+    float prevRot = 0.f;
+    float lastRot = 0.f;
 
     ~Fields() {
       if (m_fakePlayer1) {
@@ -321,10 +327,24 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    cocos2d::CCPoint camBefore =
+        m_objectLayer ? m_objectLayer->getPosition() : cocos2d::CCPoint{0, 0};
+    float scaleBefore = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
+    float rotBefore = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
+
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;
 
     GJBaseGameLayer::update(dt);
+
+    if (m_objectLayer) {
+      m_fields->prevCam = camBefore;
+      m_fields->lastCam = m_objectLayer->getPosition();
+      m_fields->prevScale = scaleBefore;
+      m_fields->lastScale = m_objectLayer->getScaleX();
+      m_fields->prevRot = rotBefore;
+      m_fields->lastRot = m_objectLayer->getRotation();
+    }
 
     for (int i = 0; i < 2; ++i) {
       auto &state = (i == 0) ? m_fields->p1 : m_fields->p2;
@@ -362,9 +382,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool hasRotChange;
   };
 
+  template <typename T, typename U> static T &getField(U *ptr, size_t offset) {
+    return *reinterpret_cast<T *>(reinterpret_cast<uintptr_t>(ptr) + offset);
+  }
+
   CameraSimulationResult
   simulateCamera(PlayLayer *playLayer, float dtFloat, bool simulatedP1,
-                 const cocos2d::CCPoint &origP1, float origObjScaleX,
+                 const cocos2d::CCPoint &origP1,
+                 const cocos2d::CCPoint &origObj, float origObjScaleX,
                  float origObjScaleY, float origObjRot, float origCameraZoom,
                  float origCameraAngle) {
     CameraSimulationResult result = {cocos2d::CCPoint{0, 0},
@@ -378,11 +403,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float nextAngle = origCameraAngle;
     float diffOffsetX = 0.f;
     float diffOffsetY = 0.f;
-    float diffStaticX = 0.f;
-    float diffStaticY = 0.f;
 
     bool hasTween10 = false;
     bool hasTween11 = false;
+    bool hasTween12 = false;
+    bool hasTween13 = false;
+    float tween10Value = 0.f;
+    float tween11Value = 0.f;
+    float tween12Value = 0.f;
+    float tween13Value = 0.f;
 
     for (const auto &[actionID, tween] :
          playLayer->m_gameState.m_tweenActions) {
@@ -391,41 +420,177 @@ class $modify(MyBGL, GJBaseGameLayer) {
           actionID == 16 || actionID == 17) {
         GJValueTween temp = tween;
         temp.step(dtFloat);
+        float diff = temp.m_currentValue - tween.m_currentValue;
 
         if (actionID == 10) {
-          diffStaticX = temp.m_currentValue - tween.m_currentValue;
+          tween10Value = temp.m_currentValue;
           hasTween10 = true;
         }
         if (actionID == 11) {
-          diffStaticY = temp.m_currentValue - tween.m_currentValue;
+          tween11Value = temp.m_currentValue;
           hasTween11 = true;
+        }
+        if (actionID == 12) {
+          tween12Value = temp.m_currentValue;
+          hasTween12 = true;
+        }
+        if (actionID == 13) {
+          tween13Value = temp.m_currentValue;
+          hasTween13 = true;
         }
         if (actionID == 14)
           nextZoom = temp.m_currentValue;
         if (actionID == 15) {
-          diffOffsetX = temp.m_currentValue - tween.m_currentValue;
+          diffOffsetX = diff;
         }
         if (actionID == 16) {
-          diffOffsetY = temp.m_currentValue - tween.m_currentValue;
+          diffOffsetY = diff;
         }
         if (actionID == 17)
           nextAngle = temp.m_currentValue;
       }
     }
 
-    if (hasTween10 || hasTween11) {
-      result.camOff.x = -diffStaticX;
-      result.camOff.y = -diffStaticY;
-    } else {
-      cocos2d::CCPoint playerDiff = {0, 0};
-      if (simulatedP1) {
-        auto myGL =
-            static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(playLayer));
-        playerDiff = myGL->m_fields->m_fakePlayer1->getPosition() - origP1;
+    auto myGL = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(playLayer));
+
+    auto getEdgeValueSim = [](PlayLayer *layer, int direction) -> float {
+      int groupID = 0;
+      if (direction == 1)
+        groupID = layer->m_gameState.m_cameraEdgeValue0;
+      else if (direction == 2)
+        groupID = layer->m_gameState.m_cameraEdgeValue1;
+      else if (direction == 3)
+        groupID = layer->m_gameState.m_cameraEdgeValue2;
+      else if (direction == 4)
+        groupID = layer->m_gameState.m_cameraEdgeValue3;
+
+      if (groupID <= 0) {
+        return (direction == 4) ? 0.0f : -99999.0f;
       }
-      result.camOff.x = -playerDiff.x - diffOffsetX;
-      result.camOff.y = -diffOffsetY;
+
+      if (static_cast<size_t>(groupID) < layer->m_groups.size()) {
+        auto arr = layer->m_groups[groupID];
+        if (arr && arr->count() > 0) {
+          auto obj = static_cast<cocos2d::CCNode *>(arr->objectAtIndex(0));
+          if (obj) {
+            return (direction <= 2) ? obj->getPositionX() : obj->getPositionY();
+          }
+        }
+      }
+      return (direction == 4) ? 0.0f : -99999.0f;
+    };
+
+    cocos2d::CCSize winSize =
+        cocos2d::CCDirector::sharedDirector()->getWinSize();
+    float cameraWidth = winSize.width / origCameraZoom;
+    float cameraHeight = winSize.height / origCameraZoom;
+
+    float v11 = getEdgeValueSim(playLayer, 1);
+    float v10 = -99999.0f;
+    if (playLayer->m_gameState.m_cameraEdgeValue1 > 0) {
+      v10 = getEdgeValueSim(playLayer, 2) - cameraWidth;
     }
+
+    float v12 = -99999.0f;
+    if (playLayer->m_gameState.m_cameraEdgeValue2 > 0) {
+      v12 = getEdgeValueSim(playLayer, 3) - cameraHeight;
+    }
+
+    float cameraEdgeValue4 = 0.0f;
+    if (playLayer->m_gameState.m_cameraEdgeValue3 > 0) {
+      cameraEdgeValue4 = getEdgeValueSim(playLayer, 4);
+    }
+
+    if (playLayer->m_freezeStartCamera && v11 <= 15.0f) {
+      v11 = 15.0f;
+    }
+
+    float v33 = 8.0f;
+    float easingX = v33;
+    float easingY = 10.0f;
+
+    if (playLayer->m_player1 && playLayer->m_player1->m_isUpsideDown) {
+      std::swap(easingX, easingY);
+    }
+
+    cocos2d::CCPoint halfWinSize =
+        cocos2d::CCPoint(winSize.width * 0.5f, winSize.height * 0.5f);
+    cocos2d::CCPoint currentRawCam = playLayer->m_gameState.m_cameraPosition -
+                                     playLayer->m_gameState.m_cameraOffset;
+
+    float targetX = currentRawCam.x;
+    float targetY = currentRawCam.y;
+
+    if (simulatedP1 && myGL->m_fields->m_fakePlayer1) {
+      targetX = myGL->m_fields->m_fakePlayer1->getPositionX() -
+                halfWinSize.x / origCameraZoom;
+      if (playLayer->m_gameState.m_isDualMode &&
+          myGL->m_fields->m_fakePlayer2) {
+        float midY = (myGL->m_fields->m_fakePlayer1->getPositionY() +
+                      myGL->m_fields->m_fakePlayer2->getPositionY()) *
+                     0.5f;
+        targetY = midY - halfWinSize.y / origCameraZoom;
+      } else {
+        targetY = myGL->m_fields->m_fakePlayer1->getPositionY() -
+                  halfWinSize.y / origCameraZoom;
+      }
+    }
+
+    if (hasTween10) {
+      targetX = tween10Value;
+    }
+    if (hasTween12) {
+      targetX = tween12Value;
+    }
+    if (hasTween11) {
+      targetY = tween11Value;
+    }
+    if (hasTween13) {
+      targetY = tween13Value;
+    }
+
+    float dtFrames = dtFloat * 60.0f;
+
+    float finalX = targetX;
+    if (!hasTween10 && !playLayer->m_freezeStartCamera) {
+      if (easingX > 1.0f && dtFrames > 0.0f) {
+        float divisorX = easingX / dtFrames;
+        finalX = currentRawCam.x + (targetX - currentRawCam.x) / divisorX;
+      } else {
+        finalX = targetX;
+      }
+    } else if (hasTween10) {
+      finalX = targetX;
+    }
+
+    float finalY = targetY;
+    if (!hasTween11) {
+      if (easingY > 1.0f && dtFrames > 0.0f) {
+        float divisorY = easingY / dtFrames;
+        finalY = currentRawCam.y + (targetY - currentRawCam.y) / divisorY;
+      } else {
+        finalY = targetY;
+      }
+    } else if (hasTween11) {
+      finalY = targetY;
+    }
+
+    if (finalX < v11)
+      finalX = v11;
+    if (v10 != -99999.0f && finalX > v10)
+      finalX = v10;
+
+    if (finalY < cameraEdgeValue4)
+      finalY = cameraEdgeValue4;
+    if (v12 != -99999.0f && finalY > v12)
+      finalY = v12;
+
+    cocos2d::CCPoint newCamPos = cocos2d::CCPoint(finalX, finalY) +
+                                 playLayer->m_gameState.m_cameraOffset;
+    newCamPos.x += -diffOffsetX;
+    newCamPos.y += -diffOffsetY;
+
+    result.camOff = playLayer->m_gameState.m_cameraPosition - newCamPos;
 
     float zoomRatio = 1.0f;
     if (nextZoom > 0.0001f) {
@@ -538,7 +703,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_groundLayer2 ? m_groundLayer2->getScaleX() : 1.f;
     float origGround2ScaleY =
         m_groundLayer2 ? m_groundLayer2->getScaleY() : 1.f;
+    float origGroundX = m_groundLayer ? m_groundLayer->getPositionX() : 0.f;
     float origGroundY = m_groundLayer ? m_groundLayer->getPositionY() : 0.f;
+    float origGround2X = m_groundLayer2 ? m_groundLayer2->getPositionX() : 0.f;
     float origGround2Y = m_groundLayer2 ? m_groundLayer2->getPositionY() : 0.f;
     GroundState groundState1 = saveGroundState(m_groundLayer);
     GroundState groundState2 = saveGroundState(m_groundLayer2);
@@ -835,9 +1002,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         double warpedDt = dtSeconds * timeScale;
         float dtFloat = static_cast<float>(warpedDt);
-        auto origTweenActionsCopy = playLayer->m_gameState.m_tweenActions;
+
         auto simResult = simulateCamera(
-            playLayer, dtFloat, simulatedP1, origP1, origObjScaleX,
+            playLayer, dtFloat, simulatedP1, origP1, origObj, origObjScaleX,
             origObjScaleY, origObjRot, origCameraZoom, origCameraAngle);
 
         camOff = simResult.camOff;
@@ -895,13 +1062,30 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
-    if (!dead && hasP1 && m_fields->p1.lastTime != 0 &&
-        camOff != CCPoint{0, 0}) {
-      if (m_groundLayer) {
-        m_groundLayer->setPositionY(origGroundY + camOff.y);
+    std::vector<std::pair<CCNode *, float>> savedGroundChildrenX;
+    auto shiftGround = [&](GJGroundLayer *ground, float shift) {
+      if (!ground)
+        return;
+      for (auto *child : CCArrayExt<CCNode *>(ground->getChildren())) {
+        if (geode::cast::typeinfo_cast<CCSpriteBatchNode *>(child)) {
+          savedGroundChildrenX.push_back({child, child->getPositionX()});
+          child->setPositionX(child->getPositionX() + shift);
+        }
       }
-      if (m_groundLayer2) {
-        m_groundLayer2->setPositionY(origGround2Y + camOff.y);
+    };
+
+    if (cameraExtrapolated) {
+      if (camOff.x != 0.f) {
+        shiftGround(m_groundLayer, camOff.x);
+        shiftGround(m_groundLayer2, camOff.x);
+      }
+      if (camOff.y != 0.f) {
+        if (m_groundLayer) {
+          m_groundLayer->setPositionY(origGroundY + camOff.y);
+        }
+        if (m_groundLayer2) {
+          m_groundLayer2->setPositionY(origGround2Y + camOff.y);
+        }
       }
     }
 
@@ -924,14 +1108,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
           m_groundLayer2->setRotation(origGround2Rot);
         }
       }
-      if (!dead && hasP1 && m_fields->p1.lastTime != 0 &&
-          camOff != CCPoint{0, 0}) {
-        if (m_groundLayer) {
-          m_groundLayer->setPositionY(origGroundY);
-        }
-        if (m_groundLayer2) {
-          m_groundLayer2->setPositionY(origGround2Y);
-        }
+
+      for (const auto &[node, x] : savedGroundChildrenX) {
+        node->setPositionX(x);
+      }
+      if (m_groundLayer) {
+        m_groundLayer->setPositionY(origGroundY);
+      }
+      if (m_groundLayer2) {
+        m_groundLayer2->setPositionY(origGround2Y);
       }
     }
 
