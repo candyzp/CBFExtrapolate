@@ -361,10 +361,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool hasRotChange;
   };
 
-  template <typename T, typename U> static T &getField(U *ptr, size_t offset) {
-    return *reinterpret_cast<T *>(reinterpret_cast<uintptr_t>(ptr) + offset);
-  }
-
   CameraSimulationResult
   simulateCamera(PlayLayer *playLayer, float dtFloat, bool simulatedP1,
                  const cocos2d::CCPoint &origP1,
