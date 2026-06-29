@@ -1,3 +1,6 @@
+# 2.2.10
+- Fixed a bug where the screen would shake infinitely upon actual player death by restoring the `!dead` (checking only `m_isDead` flag) checks to the extrapolation triggers.
+
 # 2.2.9
 - Fixed a game crash (Access Violation / DEP violation at 0x0) occurring during `MyBGL::visit` when trying to restore positions of ground child nodes that were deleted during standard visit traversal by implementing an active-tree validation check.
 

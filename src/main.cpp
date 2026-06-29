@@ -805,7 +805,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
-      if (state.lastTime != 0) {
+      if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
@@ -873,7 +873,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
       auto &state = m_fields->p2;
-      if (state.lastTime != 0) {
+      if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
@@ -943,7 +943,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     CameraState camState;
     SafeGameState safeState;
 
-    if (hasObj && hasP1 && m_fields->p1.lastTime != 0) {
+    if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
       double timeScale = m_gameState.m_timeWarp;
       if (m_fields->p1.prevTime > 0.0001 &&
