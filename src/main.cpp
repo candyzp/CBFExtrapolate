@@ -437,13 +437,35 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  void restoreNodePositions(const std::vector<SavedNodeState> &saved) {
+  void
+  collectAliveNodesRecursive(cocos2d::CCNode *node,
+                             std::unordered_set<cocos2d::CCNode *> &alive) {
+    if (!node)
+      return;
+    alive.insert(node);
+    if (node->getChildren()) {
+      for (auto *child :
+           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
+        collectAliveNodesRecursive(child, alive);
+      }
+    }
+  }
+
+  void restoreNodePositions(const std::vector<SavedNodeState> &saved,
+                            cocos2d::CCNode *root) {
+    if (!root)
+      return;
+    std::unordered_set<cocos2d::CCNode *> alive;
+    collectAliveNodesRecursive(root, alive);
+
     for (const auto &state : saved) {
-      state.node->setPosition(state.position);
-      state.node->setRotation(state.rotation);
-      state.node->setScaleX(state.scaleX);
-      state.node->setScaleY(state.scaleY);
-      state.node->setVisible(state.visible);
+      if (alive.contains(state.node)) {
+        state.node->setPosition(state.position);
+        state.node->setRotation(state.rotation);
+        state.node->setScaleX(state.scaleX);
+        state.node->setScaleY(state.scaleY);
+        state.node->setVisible(state.visible);
+      }
     }
   }
 
@@ -995,8 +1017,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
       restoreGroundState(m_groundLayer, groundState1);
       restoreGroundState(m_groundLayer2, groundState2);
 
-      restoreNodePositions(savedGroundChildren1);
-      restoreNodePositions(savedGroundChildren2);
+      restoreNodePositions(savedGroundChildren1, m_groundLayer);
+      restoreNodePositions(savedGroundChildren2, m_groundLayer2);
 
       if (hasBg) {
         m_background->setPosition(origBgPos);

@@ -1,3 +1,6 @@
+# 2.2.9
+- Fixed a game crash (Access Violation / DEP violation at 0x0) occurring during `MyBGL::visit` when trying to restore positions of ground child nodes that were deleted during standard visit traversal by implementing an active-tree validation check.
+
 # 2.2.8
 - Fixed a bug where crashing under Noclip (especially in Wave mode) would permanently disable extrapolation for the rest of the attempt.
 - implemented explicit copying of special block states (D-blocks, J-blocks, H-blocks, force blocks) and dash attributes during player state synchronization to natively support Wave sliding and other gameplay elements.
