@@ -237,13 +237,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerObject *m_fakePlayer2 = nullptr;
     bool m_enableSolidCollisions = true;
 
-    cocos2d::CCPoint prevCam = {0, 0};
-    cocos2d::CCPoint lastCam = {0, 0};
-    float prevScale = 1.f;
-    float lastScale = 1.f;
-    float prevRot = 0.f;
-    float lastRot = 0.f;
-
     ~Fields() {
       if (m_fakePlayer1) {
         if (Bot::get()->trajectory().m_fakePlayer1 == m_fakePlayer1) {
@@ -327,24 +320,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
-    cocos2d::CCPoint camBefore =
-        m_objectLayer ? m_objectLayer->getPosition() : cocos2d::CCPoint{0, 0};
-    float scaleBefore = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
-    float rotBefore = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
-
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;
 
     GJBaseGameLayer::update(dt);
-
-    if (m_objectLayer) {
-      m_fields->prevCam = camBefore;
-      m_fields->lastCam = m_objectLayer->getPosition();
-      m_fields->prevScale = scaleBefore;
-      m_fields->lastScale = m_objectLayer->getScaleX();
-      m_fields->prevRot = rotBefore;
-      m_fields->lastRot = m_objectLayer->getRotation();
-    }
 
     for (int i = 0; i < 2; ++i) {
       auto &state = (i == 0) ? m_fields->p1 : m_fields->p2;
