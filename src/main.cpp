@@ -637,7 +637,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     auto origCameraPosition = m_gameState.m_cameraPosition;
     bool origResetActiveObjects = m_resetActiveObjects;
 
-    bool hasCBF = !g_cbfSoftToggle;
+    bool hasCBF = !g_cbfSoftToggle || m_clickBetweenSteps;
 
     bool origPlayerDied = m_playerDied;
     bool hasP1 = m_player1 != nullptr;
@@ -742,6 +742,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
             dtSeconds = 0.0;
 
           std::vector<PlayerButtonCommand> sortedClicks = pendingClicks;
+          if (g_cbfSoftToggle && m_clickBetweenSteps) {
+            double stepDuration = (0.25 / 60.0) / timeScale;
+            for (auto &cmd : sortedClicks) {
+              double elapsed = cmd.m_timestamp - state.lastTime;
+              if (elapsed < 0.0) elapsed = 0.0;
+              int stepIndex = static_cast<int>(elapsed / stepDuration);
+              cmd.m_timestamp = state.lastTime + (stepIndex + 0.5) * stepDuration;
+            }
+          }
           std::sort(
               sortedClicks.begin(), sortedClicks.end(),
               [](const PlayerButtonCommand &a, const PlayerButtonCommand &b) {
