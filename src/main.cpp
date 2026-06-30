@@ -158,9 +158,40 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_dashAngle = real->m_dashAngle;
   fake->m_dashStartTime = real->m_dashStartTime;
   fake->m_dashRing = real->m_dashRing;
+
+  if (fake->m_waveTrail && fake->m_waveTrail->m_pointArray) {
+    fake->m_waveTrail->m_pointArray->removeAllObjects();
+  }
+  if (fake->m_regularTrail) {
+    fake->m_regularTrail->stopStroke();
+  }
+  if (fake->m_shipStreak) {
+    fake->m_shipStreak->stopStroke();
+  }
 }
 
 static bool isFakePlayer(PlayerObject *player);
+
+static void cleanUpFakePlayer(PlayerObject *&player) {
+  if (!player)
+    return;
+
+  if (Bot::get()->trajectory().m_fakePlayer1 == player) {
+    Bot::get()->trajectory().m_fakePlayer1 = nullptr;
+  }
+  if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 == player) {
+    Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = nullptr;
+  }
+  if (Bot::get()->trajectory().m_fakePlayer2 == player) {
+    Bot::get()->trajectory().m_fakePlayer2 = nullptr;
+  }
+  if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 == player) {
+    Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = nullptr;
+  }
+
+  player->release();
+  player = nullptr;
+}
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
@@ -475,28 +506,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
     bool m_enableSolidCollisions = true;
+    double m_teleportYOffset = 0.0;
 
     ~Fields() {
-      if (m_fakePlayer1) {
-        if (Bot::get()->trajectory().m_fakePlayer1 == m_fakePlayer1) {
-          Bot::get()->trajectory().m_fakePlayer1 = nullptr;
-        }
-        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 ==
-            m_fakePlayer1) {
-          Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = nullptr;
-        }
-        m_fakePlayer1->release();
-      }
-      if (m_fakePlayer2) {
-        if (Bot::get()->trajectory().m_fakePlayer2 == m_fakePlayer2) {
-          Bot::get()->trajectory().m_fakePlayer2 = nullptr;
-        }
-        if (Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 ==
-            m_fakePlayer2) {
-          Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = nullptr;
-        }
-        m_fakePlayer2->release();
-      }
+      cleanUpFakePlayer(m_fakePlayer1);
+      cleanUpFakePlayer(m_fakePlayer2);
     }
   };
 
@@ -529,7 +543,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
     if (isFakePlayer(player)) {
+      double yBefore = player->getPositionY();
       phys::teleportPlayer(this, obj, player);
+      double yAfter = player->getPositionY();
+      m_fields->m_teleportYOffset += (yAfter - yBefore);
     } else {
       GJBaseGameLayer::teleportPlayer(obj, player);
     }
@@ -630,10 +647,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       if (hasP1) {
         if (!m_fields->m_fakePlayer1 ||
             m_fields->m_fakePlayer1->getParent() != this) {
-          if (m_fields->m_fakePlayer1) {
-            m_fields->m_fakePlayer1->release();
-            m_fields->m_fakePlayer1 = nullptr;
-          }
+          cleanUpFakePlayer(m_fields->m_fakePlayer1);
           m_fields->m_fakePlayer1 = createFakePlayer(false);
         }
         Bot::get()->trajectory().m_fakePlayer1 = m_fields->m_fakePlayer1;
@@ -643,10 +657,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       if (hasP2) {
         if (!m_fields->m_fakePlayer2 ||
             m_fields->m_fakePlayer2->getParent() != this) {
-          if (m_fields->m_fakePlayer2) {
-            m_fields->m_fakePlayer2->release();
-            m_fields->m_fakePlayer2 = nullptr;
-          }
+          cleanUpFakePlayer(m_fields->m_fakePlayer2);
           m_fields->m_fakePlayer2 = createFakePlayer(true);
         }
         Bot::get()->trajectory().m_fakePlayer2 = m_fields->m_fakePlayer2;
@@ -759,21 +770,25 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
               float yBefore = player->getPositionY();
               double yVelBefore = player->m_yVelocity;
+              m_fields->m_teleportYOffset = 0.0;
 
               this->checkCollisions(player, delta, true);
               phys::checkSpawnObjects(this, player);
               if (!player->m_isOnSlope) {
                 float yAfter = player->getPositionY();
-                float pushOutY = yAfter - yBefore;
+                float pushOutY = yAfter - yBefore - m_fields->m_teleportYOffset;
 
-                if (player->m_lastCollisionLeft > 0 || player->m_lastCollisionRight > 0) {
+                if (player->m_lastCollisionLeft > 0 ||
+                    player->m_lastCollisionRight > 0) {
                   if (pushOutY > 0.01f && yVelBefore > 0.05) {
-                    player->setPositionY(yBefore);
-                    player->m_position.y = yBefore;
+                    float targetY = yBefore + m_fields->m_teleportYOffset;
+                    player->setPositionY(targetY);
+                    player->m_position.y = targetY;
                     player->m_yVelocity = yVelBefore;
                   } else if (pushOutY < -0.01f && yVelBefore < -0.05) {
-                    player->setPositionY(yBefore);
-                    player->m_position.y = yBefore;
+                    float targetY = yBefore + m_fields->m_teleportYOffset;
+                    player->setPositionY(targetY);
+                    player->m_position.y = targetY;
                     player->m_yVelocity = yVelBefore;
                   }
                 }
@@ -818,11 +833,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
       if (m_player1 && m_player1->m_stateDartSlide > 0) {
-        geode::log::info("D-block active! dead = {}, m_playerDied = {}, isDead = {}, lastTime = {}", 
-                         dead, m_playerDied, m_player1->m_isDead, state.lastTime);
+        geode::log::info("D-block active! dead = {}, m_playerDied = {}, isDead "
+                         "= {}, lastTime = {}",
+                         dead, m_playerDied, m_player1->m_isDead,
+                         state.lastTime);
       }
       if (state.lastTime != 0 && dead) {
-        geode::log::info("Extrap P1 skipped: dead = {}, m_playerDied = {}, isDead = {}", dead, m_playerDied, m_player1->m_isDead);
+        geode::log::info(
+            "Extrap P1 skipped: dead = {}, m_playerDied = {}, isDead = {}",
+            dead, m_playerDied, m_player1->m_isDead);
       }
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
@@ -1109,6 +1128,8 @@ class $modify(MyPlayer, PlayerObject) {
                                Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::startDashing",
                                Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::spiderTestJumpInternal",
+                               Priority::VeryEarly);
 #ifdef GEODE_IS_WINDOWS
     (void)self.setHookPriority("PlayerObject::stopDashing",
                                Priority::VeryEarly);
@@ -1238,6 +1259,28 @@ class $modify(MyPlayer, PlayerObject) {
       state->steps++;
     }
   }
+
+  void spiderTestJumpInternal(bool dynamic) {
+    if (g_softToggle) {
+      PlayerObject::spiderTestJumpInternal(dynamic);
+      return;
+    }
+    if (isFakePlayer(this)) {
+      double yBefore = this->getPositionY();
+      PlayerObject::spiderTestJumpInternal(dynamic);
+      double yAfter = this->getPositionY();
+      auto gameLayer = this->m_gameLayer;
+      MyBGL *myGL = nullptr;
+      if (gameLayer && geode::cast::typeinfo_cast<PlayLayer *>(gameLayer)) {
+        myGL = static_cast<MyBGL *>(gameLayer);
+      }
+      if (myGL) {
+        myGL->m_fields->m_teleportYOffset += (yAfter - yBefore);
+      }
+    } else {
+      PlayerObject::spiderTestJumpInternal(dynamic);
+    }
+  }
 };
 
 class $modify(MyPlayLayer, PlayLayer) {
@@ -1265,15 +1308,6 @@ class $modify(MyPlayLayer, PlayLayer) {
     if (myGL) {
       myGL->m_fields->p1 = PlayerState();
       myGL->m_fields->p2 = PlayerState();
-
-      if (myGL->m_fields->m_fakePlayer1) {
-        myGL->m_fields->m_fakePlayer1->release();
-        myGL->m_fields->m_fakePlayer1 = nullptr;
-      }
-      if (myGL->m_fields->m_fakePlayer2) {
-        myGL->m_fields->m_fakePlayer2->release();
-        myGL->m_fields->m_fakePlayer2 = nullptr;
-      }
     }
   }
 
