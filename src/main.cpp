@@ -720,8 +720,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
-    bool dead = (m_player1 && m_player1->m_isDead) ||
-                (m_player2 && m_player2->m_isDead);
+    bool dead = m_playerDied;
 
     auto extrapolatePlayer =
         [&](PlayerObject *player, PlayerState &state,
@@ -747,25 +746,38 @@ class $modify(MyBGL, GJBaseGameLayer) {
           auto updatePlayerSubstepped = [&](double dtFrames) {
             double remaining = dtFrames;
             double stepSize = 0.25;
-            double accumulated = 0.0;
 
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
               float delta = static_cast<float>(currentStep);
 
+              m_fields->m_enableSolidCollisions = true;
+
               player->m_playEffects = false;
+
               player->update(delta);
 
-              accumulated += currentStep;
-              if (accumulated >= 0.25) {
-                m_fields->m_enableSolidCollisions = true;
-                accumulated = 0.0;
-              } else {
-                m_fields->m_enableSolidCollisions = false;
-              }
+              float yBefore = player->getPositionY();
+              double yVelBefore = player->m_yVelocity;
 
               this->checkCollisions(player, delta, true);
               phys::checkSpawnObjects(this, player);
+              if (!player->m_isOnSlope) {
+                float yAfter = player->getPositionY();
+                float pushOutY = yAfter - yBefore;
+
+                if (player->m_lastCollisionLeft > 0 || player->m_lastCollisionRight > 0) {
+                  if (pushOutY > 0.01f && yVelBefore > 0.05) {
+                    player->setPositionY(yBefore);
+                    player->m_position.y = yBefore;
+                    player->m_yVelocity = yVelBefore;
+                  } else if (pushOutY < -0.01f && yVelBefore < -0.05) {
+                    player->setPositionY(yBefore);
+                    player->m_position.y = yBefore;
+                    player->m_yVelocity = yVelBefore;
+                  }
+                }
+              }
 
               player->m_isDead = false;
               remaining -= currentStep;
@@ -805,6 +817,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
+      if (m_player1 && m_player1->m_stateDartSlide > 0) {
+        geode::log::info("D-block active! dead = {}, m_playerDied = {}, isDead = {}, lastTime = {}", 
+                         dead, m_playerDied, m_player1->m_isDead, state.lastTime);
+      }
+      if (state.lastTime != 0 && dead) {
+        geode::log::info("Extrap P1 skipped: dead = {}, m_playerDied = {}, isDead = {}", dead, m_playerDied, m_player1->m_isDead);
+      }
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;

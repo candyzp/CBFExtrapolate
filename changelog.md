@@ -1,3 +1,6 @@
+# 2.2.11
+- Enabled solid collisions unconditionally on every sub-step to fully resolve the flat-surface falling/jitter bug for all game modes, while implementing a physical velocity-direction filter to reject any vertical push-outs that assist the player's vertical velocity (resolving the corner wall-climbing/teleporting bugs).
+
 # 2.2.10
 - Fixed a bug where the screen would shake infinitely upon actual player death by restoring the `!dead` (checking only `m_isDead` flag) checks to the extrapolation triggers.
 
