@@ -3,6 +3,8 @@
 - Fixed wall-climbing and corner clipping bugs.
 - Fixed game lag and memory leaks (wave trails/particles accumulating) when dying or restarting.
 - Added support for the game's native Click Between Steps (CBS) input setting during frame extrapolation.
+- Fixed extrapolation state not resetting properly when loading from checkpoints in practice mode.
+- Fixed fake player freezing in narrow corridors (such as D-block slides) and during attempts due to desynchronized position/lastPosition variables and un-cleared collision log dictionaries.
 
 # 2.2.10
 - Fixed a bug where the screen would shake infinitely upon actual player death by restoring the `!dead` (checking only `m_isDead` flag) checks to the extrapolation triggers.

@@ -71,6 +71,12 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->setPosition(real->getPosition());
   fake->setRotation(real->getRotation());
   fake->m_position = real->m_position;
+  fake->m_positionX = real->m_positionX;
+  fake->m_positionY = real->m_positionY;
+  fake->m_unmodifiedPositionX = real->m_unmodifiedPositionX;
+  fake->m_unmodifiedPositionY = real->m_unmodifiedPositionY;
+  fake->m_lastPosition = real->m_lastPosition;
+  fake->m_lastPortalPos = real->m_lastPortalPos;
 
   fake->m_yVelocity = real->m_yVelocity;
   fake->m_platformerXVelocity = real->m_platformerXVelocity;
@@ -103,6 +109,16 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_slopeFlipGravityRelated = real->m_slopeFlipGravityRelated;
   fake->m_potentialSlopeMap = real->m_potentialSlopeMap;
 
+  fake->m_collidedObject = real->m_collidedObject;
+  fake->m_collidingWithLeft = real->m_collidingWithLeft;
+  fake->m_collidingWithRight = real->m_collidingWithRight;
+  fake->m_isCollidingWithSlope = real->m_isCollidingWithSlope;
+  fake->m_maybeIsColliding = real->m_maybeIsColliding;
+  fake->m_maybeTouchedBreakableBlock = real->m_maybeTouchedBreakableBlock;
+  fake->m_touchedPad = real->m_touchedPad;
+  fake->m_isGoingLeft = real->m_isGoingLeft;
+  fake->m_isSideways = real->m_isSideways;
+
   fake->m_lastCollisionBottom = real->m_lastCollisionBottom;
   fake->m_lastCollisionTop = real->m_lastCollisionTop;
   fake->m_lastCollisionLeft = real->m_lastCollisionLeft;
@@ -124,6 +140,15 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_touchedGravityPortal = real->m_touchedGravityPortal;
   fake->m_ringRelatedSet = real->m_ringRelatedSet;
   fake->m_lastActivatedPortal = real->m_lastActivatedPortal;
+
+  if (fake->m_collisionLogTop)
+    fake->m_collisionLogTop->removeAllObjects();
+  if (fake->m_collisionLogBottom)
+    fake->m_collisionLogBottom->removeAllObjects();
+  if (fake->m_collisionLogLeft)
+    fake->m_collisionLogLeft->removeAllObjects();
+  if (fake->m_collisionLogRight)
+    fake->m_collisionLogRight->removeAllObjects();
 
   fake->m_holdingLeft = real->m_holdingLeft;
   fake->m_holdingRight = real->m_holdingRight;
@@ -626,6 +651,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool flipping = playLayer->isFlipping();
 
     if (g_softToggle || paused || isPlatformer || flipping) {
+      if (m_player1 && m_player1->m_stateDartSlide > 0) {
+        geode::log::info("Visit early return! paused = {}, isPlatformer = {}, "
+                         "flipping = {}, levelFlipping = {}",
+                         paused, isPlatformer, flipping,
+                         m_gameState.m_levelFlipping);
+      }
       GJBaseGameLayer::visit();
       return;
     }
@@ -746,9 +777,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
             double stepDuration = (0.25 / 60.0) / timeScale;
             for (auto &cmd : sortedClicks) {
               double elapsed = cmd.m_timestamp - state.lastTime;
-              if (elapsed < 0.0) elapsed = 0.0;
+              if (elapsed < 0.0)
+                elapsed = 0.0;
               int stepIndex = static_cast<int>(elapsed / stepDuration);
-              cmd.m_timestamp = state.lastTime + (stepIndex + 0.5) * stepDuration;
+              cmd.m_timestamp =
+                  state.lastTime + (stepIndex + 0.5) * stepDuration;
             }
           }
           std::sort(
@@ -775,6 +808,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
               player->m_playEffects = false;
 
+              if (player->m_collisionLogTop)
+                player->m_collisionLogTop->removeAllObjects();
+              if (player->m_collisionLogBottom)
+                player->m_collisionLogBottom->removeAllObjects();
+              if (player->m_collisionLogLeft)
+                player->m_collisionLogLeft->removeAllObjects();
+              if (player->m_collisionLogRight)
+                player->m_collisionLogRight->removeAllObjects();
+
               player->update(delta);
 
               float yBefore = player->getPositionY();
@@ -783,7 +825,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
               this->checkCollisions(player, delta, true);
               phys::checkSpawnObjects(this, player);
-              if (!player->m_isOnSlope) {
+              if (!player->m_isOnSlope && player->m_stateDartSlide <= 0) {
                 float yAfter = player->getPositionY();
                 float pushOutY = yAfter - yBefore - m_fields->m_teleportYOffset;
 
@@ -841,12 +883,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
-      if (m_player1 && m_player1->m_stateDartSlide > 0) {
-        geode::log::info("D-block active! dead = {}, m_playerDied = {}, isDead "
-                         "= {}, lastTime = {}",
-                         dead, m_playerDied, m_player1->m_isDead,
-                         state.lastTime);
-      }
       if (state.lastTime != 0 && dead) {
         geode::log::info(
             "Extrap P1 skipped: dead = {}, m_playerDied = {}, isDead = {}",
@@ -1339,6 +1375,13 @@ class $modify(MyPlayLayer, PlayLayer) {
 
   void resetLevel() override {
     PlayLayer::resetLevel();
+    if (!g_softToggle) {
+      resetExtrapolation();
+    }
+  }
+
+  void loadFromCheckpoint(CheckpointObject *object) {
+    PlayLayer::loadFromCheckpoint(object);
     if (!g_softToggle) {
       resetExtrapolation();
     }
