@@ -220,7 +220,7 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
-    bool cameraFlip;
+    float cameraFlip;
     float cameraWidthOffset;
     float cameraHeightOffset;
     float cameraUnzoomedHeightOffset;
@@ -282,156 +282,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_gameState.m_cameraOffset = state.cameraOffset;
     m_gameState.m_cameraZoom = state.cameraZoom;
     m_gameState.m_cameraAngle = state.cameraAngle;
-  }
-
-  struct SafeGameState {
-    cocos2d::CCPoint cameraPosition;
-    cocos2d::CCPoint cameraOffset;
-    float cameraZoom;
-    float cameraAngle;
-    cocos2d::CCPoint cameraPosition2;
-    cocos2d::CCPoint cameraStepDiff;
-    float unkFloat4;
-    bool unkBool20;
-    bool unkBool21;
-    cocos2d::CCPoint unkPoint4;
-    cocos2d::CCPoint unkPoint32;
-    float unkUint13;
-    cocos2d::CCPoint unkPoint34;
-    double unkUint64_1;
-    cocos2d::CCPoint unkPoint8;
-    cocos2d::CCPoint unkPoint24;
-    cocos2d::CCPoint unkPoint12;
-    cocos2d::CCPoint unkPoint6;
-    cocos2d::CCPoint unkPoint13;
-    cocos2d::CCPoint unkPoint2;
-    cocos2d::CCPoint unkPoint18;
-    cocos2d::CCPoint unkPoint19;
-    cocos2d::CCPoint unkPoint20;
-    cocos2d::CCPoint unkPoint21;
-    cocos2d::CCPoint unkPoint22;
-    cocos2d::CCPoint unkPoint26;
-    cocos2d::CCPoint unkPoint3;
-    cocos2d::CCPoint unkPoint28;
-    cocos2d::CCPoint unkPoint30;
-    int unkInt12;
-    float middleGroundOffsetY;
-    float cameraShakeFactor;
-    bool unkBool1;
-    float unkFloat2;
-    float unkFloat3;
-    int unkInt10;
-    int unkInt11;
-    int unkInt14;
-    bool unkBool7;
-    bool unkBool8;
-    bool unkBool9;
-    float unkFloat9;
-    unsigned int dualRelated;
-    gd::map<std::pair<int, int>, int> activatedObjectIDs;
-    bool unkBool30;
-    bool unkBool31;
-    bool unkBool32;
-  };
-
-  void saveSafeGameState(SafeGameState &state) {
-    state.cameraPosition = m_gameState.m_cameraPosition;
-    state.cameraOffset = m_gameState.m_cameraOffset;
-    state.cameraZoom = m_gameState.m_cameraZoom;
-    state.cameraAngle = m_gameState.m_cameraAngle;
-    state.cameraPosition2 = m_gameState.m_cameraPosition2;
-    state.cameraStepDiff = m_gameState.m_cameraStepDiff;
-    state.unkFloat4 = m_gameState.m_unkFloat4;
-    state.unkBool20 = m_gameState.m_unkBool20;
-    state.unkBool21 = m_gameState.m_unkBool21;
-    state.unkPoint4 = m_gameState.m_unkPoint4;
-    state.unkPoint32 = m_gameState.m_unkPoint32;
-    state.unkUint13 = m_gameState.m_unkUint13;
-    state.unkPoint34 = m_gameState.m_unkPoint34;
-    state.unkUint64_1 = m_gameState.m_unkUint64_1;
-    state.unkPoint8 = m_gameState.m_unkPoint8;
-    state.unkPoint24 = m_gameState.m_unkPoint24;
-    state.unkPoint12 = m_gameState.m_unkPoint12;
-    state.unkPoint6 = m_gameState.m_unkPoint6;
-    state.unkPoint13 = m_gameState.m_unkPoint13;
-    state.unkPoint2 = m_gameState.m_unkPoint2;
-    state.unkPoint18 = m_gameState.m_unkPoint18;
-    state.unkPoint19 = m_gameState.m_unkPoint19;
-    state.unkPoint20 = m_gameState.m_unkPoint20;
-    state.unkPoint21 = m_gameState.m_unkPoint21;
-    state.unkPoint22 = m_gameState.m_unkPoint22;
-    state.unkPoint26 = m_gameState.m_unkPoint26;
-    state.unkPoint3 = m_gameState.m_unkPoint3;
-    state.unkPoint28 = m_gameState.m_unkPoint28;
-    state.unkPoint30 = m_gameState.m_unkPoint30;
-    state.unkInt12 = m_gameState.m_unkInt12;
-    state.middleGroundOffsetY = m_gameState.m_middleGroundOffsetY;
-    state.cameraShakeFactor = m_gameState.m_cameraShakeFactor;
-    state.unkBool1 = m_gameState.m_unkBool1;
-    state.unkFloat2 = m_gameState.m_unkFloat2;
-    state.unkFloat3 = m_gameState.m_unkFloat3;
-    state.unkInt10 = m_gameState.m_unkInt10;
-    state.unkInt11 = m_gameState.m_unkInt11;
-    state.unkInt14 = m_gameState.m_unkInt14;
-    state.unkBool7 = m_gameState.m_unkBool7;
-    state.unkBool8 = m_gameState.m_unkBool8;
-    state.unkBool9 = m_gameState.m_unkBool9;
-    state.unkFloat9 = m_gameState.m_unkFloat9;
-    state.dualRelated = m_gameState.m_dualRelated;
-    state.activatedObjectIDs = m_gameState.m_activatedObjectIDs;
-    state.unkBool30 = m_gameState.m_unkBool30;
-    state.unkBool31 = m_gameState.m_unkBool31;
-    state.unkBool32 = m_gameState.m_unkBool32;
-  }
-
-  void restoreSafeGameState(const SafeGameState &state) {
-    m_gameState.m_cameraPosition = state.cameraPosition;
-    m_gameState.m_cameraOffset = state.cameraOffset;
-    m_gameState.m_cameraZoom = state.cameraZoom;
-    m_gameState.m_cameraAngle = state.cameraAngle;
-    m_gameState.m_cameraPosition2 = state.cameraPosition2;
-    m_gameState.m_cameraStepDiff = state.cameraStepDiff;
-    m_gameState.m_unkFloat4 = state.unkFloat4;
-    m_gameState.m_unkBool20 = state.unkBool20;
-    m_gameState.m_unkBool21 = state.unkBool21;
-    m_gameState.m_unkPoint4 = state.unkPoint4;
-    m_gameState.m_unkPoint32 = state.unkPoint32;
-    m_gameState.m_unkUint13 = state.unkUint13;
-    m_gameState.m_unkPoint34 = state.unkPoint34;
-    m_gameState.m_unkUint64_1 = state.unkUint64_1;
-    m_gameState.m_unkPoint8 = state.unkPoint8;
-    m_gameState.m_unkPoint24 = state.unkPoint24;
-    m_gameState.m_unkPoint12 = state.unkPoint12;
-    m_gameState.m_unkPoint6 = state.unkPoint6;
-    m_gameState.m_unkPoint13 = state.unkPoint13;
-    m_gameState.m_unkPoint2 = state.unkPoint2;
-    m_gameState.m_unkPoint18 = state.unkPoint18;
-    m_gameState.m_unkPoint19 = state.unkPoint19;
-    m_gameState.m_unkPoint20 = state.unkPoint20;
-    m_gameState.m_unkPoint21 = state.unkPoint21;
-    m_gameState.m_unkPoint22 = state.unkPoint22;
-    m_gameState.m_unkPoint26 = state.unkPoint26;
-    m_gameState.m_unkPoint3 = state.unkPoint3;
-    m_gameState.m_unkPoint28 = state.unkPoint28;
-    m_gameState.m_unkPoint30 = state.unkPoint30;
-    m_gameState.m_unkInt12 = state.unkInt12;
-    m_gameState.m_middleGroundOffsetY = state.middleGroundOffsetY;
-    m_gameState.m_cameraShakeFactor = state.cameraShakeFactor;
-    m_gameState.m_unkBool1 = state.unkBool1;
-    m_gameState.m_unkFloat2 = state.unkFloat2;
-    m_gameState.m_unkFloat3 = state.unkFloat3;
-    m_gameState.m_unkInt10 = state.unkInt10;
-    m_gameState.m_unkInt11 = state.unkInt11;
-    m_gameState.m_unkInt14 = state.unkInt14;
-    m_gameState.m_unkBool7 = state.unkBool7;
-    m_gameState.m_unkBool8 = state.unkBool8;
-    m_gameState.m_unkBool9 = state.unkBool9;
-    m_gameState.m_unkFloat9 = state.unkFloat9;
-    m_gameState.m_dualRelated = state.dualRelated;
-    m_gameState.m_activatedObjectIDs = state.activatedObjectIDs;
-    m_gameState.m_unkBool30 = state.unkBool30;
-    m_gameState.m_unkBool31 = state.unkBool31;
-    m_gameState.m_unkBool32 = state.unkBool32;
   }
 
   struct GroundState {
@@ -548,6 +398,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
                                Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::teleportPlayer",
                                Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::toggleFlipped",
+                               Priority::VeryEarly);
   }
 
   void flipGravity(PlayerObject *player, bool gravity, bool unk) {
@@ -590,6 +442,17 @@ class $modify(MyBGL, GJBaseGameLayer) {
     } else {
       GJBaseGameLayer::collisionCheckObjects(player, objects, length, dt);
     }
+  }
+
+  void toggleFlipped(bool flip, bool noEffects) {
+    if (g_softToggle) {
+      GJBaseGameLayer::toggleFlipped(flip, noEffects);
+      return;
+    }
+    if (g_extrapolating) {
+      return;
+    }
+    GJBaseGameLayer::toggleFlipped(flip, noEffects);
   }
 
   void update(float dt) override {
@@ -651,12 +514,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool flipping = playLayer->isFlipping();
 
     if (g_softToggle || paused || isPlatformer || flipping) {
-      if (m_player1 && m_player1->m_stateDartSlide > 0) {
-        geode::log::info("Visit early return! paused = {}, isPlatformer = {}, "
-                         "flipping = {}, levelFlipping = {}",
-                         paused, isPlatformer, flipping,
-                         m_gameState.m_levelFlipping);
-      }
       GJBaseGameLayer::visit();
       return;
     }
@@ -748,6 +605,27 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasObj) {
       origObj = m_objectLayer->getPosition();
     }
+
+    float origInShaderObjScaleX =
+        m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
+    float origInShaderObjScaleY =
+        m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleY() : 1.f;
+    float origInShaderObjRot =
+        m_inShaderObjectLayer ? m_inShaderObjectLayer->getRotation() : 0.f;
+    CCPoint origInShaderObjPos = m_inShaderObjectLayer
+                                     ? m_inShaderObjectLayer->getPosition()
+                                     : CCPoint{0, 0};
+
+    float origAboveShaderObjScaleX =
+        m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getScaleX() : 1.f;
+    float origAboveShaderObjScaleY =
+        m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getScaleY() : 1.f;
+    float origAboveShaderObjRot = m_aboveShaderObjectLayer
+                                      ? m_aboveShaderObjectLayer->getRotation()
+                                      : 0.f;
+    CCPoint origAboveShaderObjPos =
+        m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getPosition()
+                                 : CCPoint{0, 0};
 
     CCPoint origBgPos = {0, 0};
     float origBgScaleX = 1.0f;
@@ -883,11 +761,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
-      if (state.lastTime != 0 && dead) {
-        geode::log::info(
-            "Extrap P1 skipped: dead = {}, m_playerDied = {}, isDead = {}",
-            dead, m_playerDied, m_player1->m_isDead);
-      }
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
         double timeScale = m_gameState.m_timeWarp;
@@ -1024,7 +897,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     bool cameraExtrapolated = false;
     CameraState camState;
-    SafeGameState safeState;
+    GJGameState origGameState;
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
@@ -1056,16 +929,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
         camState = saveCameraState();
-        saveSafeGameState(safeState);
+        origGameState = m_gameState;
         cameraExtrapolated = true;
 
         double warpedDt = dtSeconds * timeScale;
         float dtFloat = static_cast<float>(warpedDt);
 
-        auto origTweenActionsCopy = m_gameState.m_tweenActions;
-
         gd::unordered_map<int, GJValueTween> filteredTweens;
-        for (const auto &[actionID, tween] : origTweenActionsCopy) {
+        for (const auto &[actionID, tween] : m_gameState.m_tweenActions) {
           if (actionID == 1 || actionID == 2 || actionID == 7 ||
               (actionID >= 10 && actionID <= 19) || actionID == 21 ||
               actionID == 22) {
@@ -1075,8 +946,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_gameState.m_tweenActions = filteredTweens;
 
         m_gameState.updateTweenActions(dtFloat);
-
-        m_gameState.m_tweenActions = origTweenActionsCopy;
 
         bool tempCalculate = m_calculateTargetHeightOffset;
         m_calculateTargetHeightOffset = false;
@@ -1089,7 +958,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (cameraExtrapolated) {
       restoreCameraState(camState);
-      restoreSafeGameState(safeState);
+      m_gameState = origGameState;
 
       if (hasObj) {
         m_objectLayer->setPosition(origObj);
@@ -1108,6 +977,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_background->setScaleX(origBgScaleX);
         m_background->setScaleY(origBgScaleY);
         m_background->setRotation(origBgRot);
+      }
+
+      if (m_inShaderObjectLayer) {
+        m_inShaderObjectLayer->setPosition(origInShaderObjPos);
+        m_inShaderObjectLayer->setScaleX(origInShaderObjScaleX);
+        m_inShaderObjectLayer->setScaleY(origInShaderObjScaleY);
+        m_inShaderObjectLayer->setRotation(origInShaderObjRot);
+      }
+      if (m_aboveShaderObjectLayer) {
+        m_aboveShaderObjectLayer->setPosition(origAboveShaderObjPos);
+        m_aboveShaderObjectLayer->setScaleX(origAboveShaderObjScaleX);
+        m_aboveShaderObjectLayer->setScaleY(origAboveShaderObjScaleY);
+        m_aboveShaderObjectLayer->setRotation(origAboveShaderObjRot);
       }
     }
 
