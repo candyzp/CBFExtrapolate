@@ -1,3 +1,7 @@
+# 2.2.12
+- Fixed a bug where objects remained visually flipped (X-flipped) in place after exiting a mirror portal.
+- Improved rendering stability and fixed potential visual glitches.
+
 # 2.2.11
 - Fixed player model jittering or falling through flat blocks.
 - Fixed wall-climbing and corner clipping bugs.
