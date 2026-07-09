@@ -9,9 +9,9 @@
 #include <Geode/binding/GameManager.hpp>
 #include <Geode/binding/LevelSettingsObject.hpp>
 #include <Geode/binding/PauseLayer.hpp>
-#include <Geode/binding/RingObject.hpp>
 #include <Geode/modify/EnhancedGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/GJGroundLayer.hpp>
 #include <Geode/modify/HardStreak.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
@@ -292,6 +292,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float rotation;
     float offset;
     float unk;
+    bool showGround;
+    bool showGround1;
+    bool showGround2;
+    bool cameraRotated;
   };
 
   GroundState saveGroundState(GJGroundLayer *ground) {
@@ -304,6 +308,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
       state.rotation = ground->getRotation();
       state.offset = ground->m_ground1Offset;
       state.unk = ground->m_unk1cc;
+      state.showGround = ground->m_showGround;
+      state.showGround1 = ground->m_showGround1;
+      state.showGround2 = ground->m_showGround2;
+      state.cameraRotated = ground->m_cameraRotated;
     }
     return state;
   }
@@ -317,6 +325,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
       ground->setRotation(state.rotation);
       ground->m_ground1Offset = state.offset;
       ground->m_unk1cc = state.unk;
+      ground->m_showGround = state.showGround;
+      ground->m_showGround1 = state.showGround1;
+      ground->m_showGround2 = state.showGround2;
+      ground->m_cameraRotated = state.cameraRotated;
     }
   }
 
@@ -327,14 +339,23 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float scaleX;
     float scaleY;
     bool visible;
+    unsigned char opacity;
+    bool hasOpacity;
   };
 
   void saveNodePositionsRecursive(cocos2d::CCNode *node,
                                   std::vector<SavedNodeState> &saved) {
     if (!node)
       return;
+    unsigned char opacity = 255;
+    bool hasOpacity = false;
+    if (auto rgba = dynamic_cast<cocos2d::CCRGBAProtocol *>(node)) {
+      opacity = rgba->getOpacity();
+      hasOpacity = true;
+    }
     saved.push_back({node, node->getPosition(), node->getRotation(),
-                     node->getScaleX(), node->getScaleY(), node->isVisible()});
+                     node->getScaleX(), node->getScaleY(), node->isVisible(),
+                     opacity, hasOpacity});
     if (node->getChildren()) {
       for (auto *child :
            geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
@@ -371,6 +392,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
         state.node->setScaleX(state.scaleX);
         state.node->setScaleY(state.scaleY);
         state.node->setVisible(state.visible);
+        if (state.hasOpacity) {
+          if (auto rgba = dynamic_cast<cocos2d::CCRGBAProtocol *>(state.node)) {
+            rgba->setOpacity(state.opacity);
+          }
+        }
       }
     }
   }
@@ -949,7 +975,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         bool tempCalculate = m_calculateTargetHeightOffset;
         m_calculateTargetHeightOffset = false;
+        g_extrapolating = true;
         this->updateCamera(dtFloat);
+        g_extrapolating = false;
         m_calculateTargetHeightOffset = tempCalculate;
       }
     }
@@ -1316,5 +1344,21 @@ class $modify(MyEnhancedGameObject, EnhancedGameObject) {
     } else {
       EnhancedGameObject::activatedByPlayer(player);
     }
+  }
+};
+
+class $modify(MyGJGroundLayer, GJGroundLayer) {
+  void fadeInGround(float duration) {
+    if (g_extrapolating) {
+      return;
+    }
+    GJGroundLayer::fadeInGround(duration);
+  }
+
+  void fadeOutGround(float duration) {
+    if (g_extrapolating) {
+      return;
+    }
+    GJGroundLayer::fadeOutGround(duration);
   }
 };

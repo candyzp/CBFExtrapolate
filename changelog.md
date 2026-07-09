@@ -1,3 +1,6 @@
+# 2.2.13
+- Fixed a bug where the ground (or parts of it) would occasionally disappear or fade out permanently during gameplay. (probably; I can't test this because this bug is very rare)
+
 # 2.2.12
 - Fixed a bug where objects remained visually flipped (X-flipped) in place after exiting a mirror portal.
 - Improved rendering stability and fixed potential visual glitches.
