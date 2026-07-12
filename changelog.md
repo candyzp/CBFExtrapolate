@@ -1,3 +1,6 @@
+# 2.3.2
+- Fixed D-block issue (again)
+
 # 2.3.1
 - Fixed D-block issue
 
