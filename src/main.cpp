@@ -17,8 +17,40 @@
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
 
-#include <algorithm>
-#include <vector>
+#ifdef GEODE_IS_WINDOWS
+#include <atomic>
+
+enum DeviceType : int8_t {
+  MOUSE,
+  TOUCHPAD,
+  KEYBOARD,
+  TOUCHSCREEN,
+  CONTROLLER,
+  UNKNOWN
+};
+
+struct __attribute__((packed)) LinuxInputEvent {
+  int64_t time;
+  uint16_t type;
+  uint16_t code;
+  int32_t value;
+  DeviceType deviceType;
+};
+
+constexpr size_t RING_BUFFER_SIZE = 256;
+
+struct __attribute__((packed)) SharedMemory {
+  volatile uint32_t head;
+  volatile uint32_t tail;
+  volatile uint32_t error_flag;
+  volatile uint32_t heartbeat;
+  LinuxInputEvent events[RING_BUFFER_SIZE];
+};
+
+static HANDLE g_hShmFile = NULL;
+static HANDLE g_hShmMapping = NULL;
+static SharedMemory *g_pSharedMem = nullptr;
+#endif
 
 using namespace geode::prelude;
 
@@ -36,6 +68,14 @@ $on_mod(Loaded) {
     g_cbfSoftToggle = m->getSettingValue<bool>("soft-toggle");
     listenForSettingChanges<bool>(
         "soft-toggle", [](bool value) { g_cbfSoftToggle = value; }, m);
+
+#ifdef GEODE_IS_WINDOWS
+    if (geode::utils::platform::isWine()) {
+      g_linuxNative = m->getSettingValue<bool>("wine-workaround");
+      listenForSettingChanges<bool>(
+          "wine-workaround", [](bool value) { g_linuxNative = value; }, m);
+    }
+#endif
   }
 }
 
@@ -217,6 +257,114 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
   player->release();
   player = nullptr;
 }
+
+#ifdef GEODE_IS_WINDOWS
+inline void initSharedMemory() {
+  if (g_pSharedMem)
+    return;
+  if (!g_linuxNative)
+    return;
+
+  std::string shmName = "cbf-" + std::to_string(GetCurrentProcessId());
+  std::string winShmPath = std::string("Z:\\dev\\shm\\") + shmName;
+
+  g_hShmFile = CreateFileA(winShmPath.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (g_hShmFile == INVALID_HANDLE_VALUE) {
+    g_hShmFile = NULL;
+    return;
+  }
+
+  g_hShmMapping = CreateFileMappingA(g_hShmFile, NULL, PAGE_READONLY, 0,
+                                     sizeof(SharedMemory), NULL);
+  if (!g_hShmMapping) {
+    CloseHandle(g_hShmFile);
+    g_hShmFile = NULL;
+    return;
+  }
+
+  g_pSharedMem = static_cast<SharedMemory *>(
+      MapViewOfFile(g_hShmMapping, FILE_MAP_READ, 0, 0, sizeof(SharedMemory)));
+  if (!g_pSharedMem) {
+    CloseHandle(g_hShmMapping);
+    CloseHandle(g_hShmFile);
+    g_hShmMapping = NULL;
+    g_hShmFile = NULL;
+  }
+}
+
+inline std::vector<PlayerButtonCommand>
+getPendingClicksFromSharedMemory(double lastTime, double targetTime,
+                                 bool isTwoPlayer) {
+  std::vector<PlayerButtonCommand> pending;
+  if (!g_pSharedMem)
+    return pending;
+
+  uint32_t h = g_pSharedMem->head;
+  std::atomic_thread_fence(std::memory_order_acquire);
+  uint32_t t = g_pSharedMem->tail;
+
+  while (t != h) {
+    const LinuxInputEvent &ev =
+        g_pSharedMem->events[t & (RING_BUFFER_SIZE - 1)];
+    t++;
+
+    double timestamp =
+        static_cast<double>(ev.time) / static_cast<double>(freq.QuadPart);
+
+    if (timestamp > lastTime && timestamp <= targetTime) {
+      PlayerButton button = PlayerButton::Jump;
+      bool player2 = false;
+      bool valid = false;
+
+      if (ev.type == 1 /* EV_KEY */) {
+        if (ev.deviceType == KEYBOARD) {
+          if (ev.code == 57 /* KEY_SPACE */ || ev.code == 17 /* KEY_W */) {
+            button = PlayerButton::Jump;
+            player2 = false;
+            valid = true;
+          } else if (ev.code == 103 /* KEY_UP */) {
+            button = PlayerButton::Jump;
+            player2 = isTwoPlayer;
+            valid = true;
+          }
+        } else if (ev.deviceType == MOUSE || ev.deviceType == TOUCHPAD) {
+          if (ev.code == 0x110 /* BTN_LEFT */) {
+            button = PlayerButton::Jump;
+            player2 = false;
+            valid = true;
+          } else if (ev.code == 0x111 /* BTN_RIGHT */) {
+            button = PlayerButton::Jump;
+            player2 = true;
+            valid = true;
+          }
+        } else if (ev.deviceType == CONTROLLER) {
+          if (ev.code == 0x130 /* BTN_A */ || ev.code == 0x137 /* BTN_TR */) {
+            button = PlayerButton::Jump;
+            player2 = false;
+            valid = true;
+          } else if (ev.code == 0x136 /* BTN_TL */) {
+            button = PlayerButton::Jump;
+            player2 = true;
+            valid = true;
+          }
+        }
+      }
+
+      if (valid) {
+        PlayerButtonCommand cmd;
+        cmd.m_button = button;
+        cmd.m_isPlayer2 = player2;
+        cmd.m_isPush = (ev.value != 0);
+        cmd.m_timestamp = timestamp;
+        pending.push_back(cmd);
+      }
+    }
+  }
+  return pending;
+}
+#endif
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
@@ -819,13 +967,29 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (hasCBF) {
             bool isTwoPlayer =
                 m_levelSettings && m_levelSettings->m_twoPlayerMode;
-            for (const auto &cmd : m_queuedButtons) {
-              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-              if (isTarget && cmd.m_timestamp > state.lastTime &&
-                  cmd.m_timestamp <= tCurrentClamped) {
-                pendingClicks.push_back(cmd);
+#ifdef GEODE_IS_WINDOWS
+            if (g_linuxNative) {
+              initSharedMemory();
+              auto clicks = getPendingClicksFromSharedMemory(
+                  state.lastTime, tCurrentClamped, isTwoPlayer);
+              for (const auto &cmd : clicks) {
+                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget) {
+                  pendingClicks.push_back(cmd);
+                }
               }
+            } else {
+#endif
+              for (const auto &cmd : m_queuedButtons) {
+                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget && cmd.m_timestamp > state.lastTime &&
+                    cmd.m_timestamp <= tCurrentClamped) {
+                  pendingClicks.push_back(cmd);
+                }
+              }
+#ifdef GEODE_IS_WINDOWS
             }
+#endif
           }
 
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
@@ -887,13 +1051,29 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (hasCBF) {
             bool isTwoPlayer =
                 m_levelSettings && m_levelSettings->m_twoPlayerMode;
-            for (const auto &cmd : m_queuedButtons) {
-              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-              if (isTarget && cmd.m_timestamp > state.lastTime &&
-                  cmd.m_timestamp <= tCurrentClamped) {
-                pendingClicks.push_back(cmd);
+#ifdef GEODE_IS_WINDOWS
+            if (g_linuxNative) {
+              initSharedMemory();
+              auto clicks = getPendingClicksFromSharedMemory(
+                  state.lastTime, tCurrentClamped, isTwoPlayer);
+              for (const auto &cmd : clicks) {
+                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget) {
+                  pendingClicks.push_back(cmd);
+                }
               }
+            } else {
+#endif
+              for (const auto &cmd : m_queuedButtons) {
+                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget && cmd.m_timestamp > state.lastTime &&
+                    cmd.m_timestamp <= tCurrentClamped) {
+                  pendingClicks.push_back(cmd);
+                }
+              }
+#ifdef GEODE_IS_WINDOWS
             }
+#endif
           }
 
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);

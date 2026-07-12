@@ -1,3 +1,6 @@
+# 2.3.0
+- wine workaround
+
 # 2.2.13
 - Fixed a bug where the ground (or parts of it) would occasionally disappear or fade out permanently during gameplay. (probably; I can't test this because this bug is very rare)
 
