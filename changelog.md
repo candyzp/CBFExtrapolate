@@ -1,3 +1,6 @@
+# 2.3.1
+- Fixed D-block issue
+
 # 2.3.0
 - wine workaround
 

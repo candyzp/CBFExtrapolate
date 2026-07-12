@@ -875,8 +875,31 @@ class $modify(MyBGL, GJBaseGameLayer) {
               double yVelBefore = player->m_yVelocity;
               m_fields->m_teleportYOffset = 0.0;
 
+              int origSolidCount = m_solidCollisionObjectsCount;
+              int origHazardCount = m_hazardCollisionObjectsCount;
+              int origSolidIndex = m_solidCollisionObjectsIndex;
+              int origHazardIndex = m_hazardCollisionObjectsIndex;
+              auto origSolidObjects = m_solidCollisionObjects;
+              auto origHazardObjects = m_hazardCollisionObjects;
+
+              m_solidCollisionObjectsCount = 0;
+              m_hazardCollisionObjectsCount = 0;
+              m_solidCollisionObjectsIndex = 0;
+              m_hazardCollisionObjectsIndex = 0;
+              m_solidCollisionObjects.clear();
+              m_hazardCollisionObjects.clear();
+
+              this->collisionCheckObjects(player, &m_activeObjects, m_activeObjects.size(), delta);
+
               this->checkCollisions(player, delta, true);
               phys::checkSpawnObjects(this, player);
+
+              m_solidCollisionObjectsCount = origSolidCount;
+              m_hazardCollisionObjectsCount = origHazardCount;
+              m_solidCollisionObjectsIndex = origSolidIndex;
+              m_hazardCollisionObjectsIndex = origHazardIndex;
+              m_solidCollisionObjects = origSolidObjects;
+              m_hazardCollisionObjects = origHazardObjects;
               if (!player->m_isOnSlope && player->m_stateDartSlide <= 0) {
                 float yAfter = player->getPositionY();
                 float pushOutY = yAfter - yBefore - m_fields->m_teleportYOffset;
