@@ -294,6 +294,160 @@ inline void initSharedMemory() {
   }
 }
 
+inline cocos2d::enumKeyCodes evdevToCocos(uint16_t code) {
+  switch (code) {
+  case 57:
+    return cocos2d::KEY_Space;
+  case 17:
+    return cocos2d::KEY_W;
+  case 103:
+    return cocos2d::KEY_ArrowUp;
+  case 105:
+    return cocos2d::KEY_ArrowLeft;
+  case 106:
+    return cocos2d::KEY_ArrowRight;
+  case 108:
+    return cocos2d::KEY_ArrowDown;
+  case 30:
+    return cocos2d::KEY_A;
+  case 32:
+    return cocos2d::KEY_D;
+  case 44:
+    return cocos2d::KEY_Z;
+  case 45:
+    return cocos2d::KEY_X;
+  case 25:
+    return cocos2d::KEY_P;
+  case 16:
+    return cocos2d::KEY_Q;
+  case 18:
+    return cocos2d::KEY_E;
+  case 19:
+    return cocos2d::KEY_R;
+  case 20:
+    return cocos2d::KEY_T;
+  case 21:
+    return cocos2d::KEY_Y;
+  case 22:
+    return cocos2d::KEY_U;
+  case 23:
+    return cocos2d::KEY_I;
+  case 24:
+    return cocos2d::KEY_O;
+  case 31:
+    return cocos2d::KEY_S;
+  case 33:
+    return cocos2d::KEY_F;
+  case 34:
+    return cocos2d::KEY_G;
+  case 35:
+    return cocos2d::KEY_H;
+  case 36:
+    return cocos2d::KEY_J;
+  case 37:
+    return cocos2d::KEY_K;
+  case 38:
+    return cocos2d::KEY_L;
+  case 46:
+    return cocos2d::KEY_C;
+  case 47:
+    return cocos2d::KEY_V;
+  case 48:
+    return cocos2d::KEY_B;
+  case 49:
+    return cocos2d::KEY_N;
+  case 50:
+    return cocos2d::KEY_M;
+  case 2:
+    return cocos2d::KEY_One;
+  case 3:
+    return cocos2d::KEY_Two;
+  case 4:
+    return cocos2d::KEY_Three;
+  case 5:
+    return cocos2d::KEY_Four;
+  case 6:
+    return cocos2d::KEY_Five;
+  case 7:
+    return cocos2d::KEY_Six;
+  case 8:
+    return cocos2d::KEY_Seven;
+  case 9:
+    return cocos2d::KEY_Eight;
+  case 10:
+    return cocos2d::KEY_Nine;
+  case 11:
+    return cocos2d::KEY_Zero;
+  case 82:
+    return cocos2d::KEY_NumPad0;
+  case 79:
+    return cocos2d::KEY_NumPad1;
+  case 80:
+    return cocos2d::KEY_NumPad2;
+  case 81:
+    return cocos2d::KEY_NumPad3;
+  case 75:
+    return cocos2d::KEY_NumPad4;
+  case 76:
+    return cocos2d::KEY_NumPad5;
+  case 77:
+    return cocos2d::KEY_NumPad6;
+  case 71:
+    return cocos2d::KEY_NumPad7;
+  case 72:
+    return cocos2d::KEY_NumPad8;
+  case 73:
+    return cocos2d::KEY_NumPad9;
+  case 28:
+    return cocos2d::KEY_Enter;
+  case 1:
+    return cocos2d::KEY_Escape;
+  case 42:
+    return cocos2d::KEY_LeftShift;
+  case 54:
+    return cocos2d::KEY_RightShift;
+  case 29:
+    return cocos2d::KEY_LeftControl;
+  case 97:
+    return cocos2d::KEY_RightControl;
+  case 56:
+    return cocos2d::KEY_LeftMenu;
+  case 100:
+    return cocos2d::KEY_RightMenu;
+  case 0x130:
+    return cocos2d::CONTROLLER_A;
+  case 0x131:
+    return cocos2d::CONTROLLER_B;
+  case 0x132:
+    return cocos2d::CONTROLLER_X;
+  case 0x133:
+    return cocos2d::CONTROLLER_Y;
+  case 0x136:
+    return cocos2d::CONTROLLER_LB;
+  case 0x137:
+    return cocos2d::CONTROLLER_RB;
+  case 0x138:
+    return cocos2d::CONTROLLER_LT;
+  case 0x139:
+    return cocos2d::CONTROLLER_RT;
+  case 0x13b:
+    return cocos2d::CONTROLLER_Start;
+  case 0x13a:
+    return cocos2d::CONTROLLER_Back;
+  default:
+    return cocos2d::KEY_None;
+  }
+}
+
+inline bool containsKey(const std::vector<cocos2d::enumKeyCodes> &vec,
+                        cocos2d::enumKeyCodes val) {
+  for (auto x : vec) {
+    if (x == val)
+      return true;
+  }
+  return false;
+}
+
 inline std::vector<PlayerButtonCommand>
 getPendingClicksFromSharedMemory(double lastTime, double targetTime,
                                  bool isTwoPlayer) {
@@ -304,6 +458,29 @@ getPendingClicksFromSharedMemory(double lastTime, double targetTime,
   uint32_t h = g_pSharedMem->head;
   std::atomic_thread_fence(std::memory_order_acquire);
   uint32_t t = g_pSharedMem->tail;
+
+  static auto customKeybindsMod =
+      Loader::get()->getLoadedMod("geode.custom-keybinds");
+  std::vector<cocos2d::enumKeyCodes> p1Binds;
+  std::vector<cocos2d::enumKeyCodes> p2Binds;
+
+  if (customKeybindsMod) {
+    auto val1 = customKeybindsMod->getSettingValue<std::vector<geode::Keybind>>(
+        "jump-p1");
+    for (const auto &bind : val1) {
+      p1Binds.push_back(bind.key);
+    }
+    auto val2 = customKeybindsMod->getSettingValue<std::vector<geode::Keybind>>(
+        "jump-p2");
+    for (const auto &bind : val2) {
+      p2Binds.push_back(bind.key);
+    }
+  } else {
+    p1Binds = {cocos2d::KEY_Space, cocos2d::KEY_W, cocos2d::CONTROLLER_A,
+               cocos2d::CONTROLLER_Up, cocos2d::CONTROLLER_RB};
+    p2Binds = {cocos2d::KEY_ArrowUp, cocos2d::CONTROLLER_LB,
+               cocos2d::CONTROLLER2_A};
+  }
 
   while (t != h) {
     const LinuxInputEvent &ev =
@@ -318,33 +495,29 @@ getPendingClicksFromSharedMemory(double lastTime, double targetTime,
       bool player2 = false;
       bool valid = false;
 
-      if (ev.type == 1 /* EV_KEY */) {
-        if (ev.deviceType == KEYBOARD) {
-          if (ev.code == 57 /* KEY_SPACE */ || ev.code == 17 /* KEY_W */) {
-            button = PlayerButton::Jump;
-            player2 = false;
-            valid = true;
-          } else if (ev.code == 103 /* KEY_UP */) {
-            button = PlayerButton::Jump;
-            player2 = isTwoPlayer;
-            valid = true;
+      if (ev.type == 1) {
+        if (ev.deviceType == KEYBOARD || ev.deviceType == CONTROLLER) {
+          cocos2d::enumKeyCodes cocosKey = evdevToCocos(ev.code);
+          if (cocosKey != cocos2d::KEY_None) {
+            bool isP1 = containsKey(p1Binds, cocosKey);
+            bool isP2 = containsKey(p2Binds, cocosKey);
+
+            if (isP1) {
+              button = PlayerButton::Jump;
+              player2 = false;
+              valid = true;
+            } else if (isP2) {
+              button = PlayerButton::Jump;
+              player2 = true;
+              valid = true;
+            }
           }
         } else if (ev.deviceType == MOUSE || ev.deviceType == TOUCHPAD) {
-          if (ev.code == 0x110 /* BTN_LEFT */) {
+          if (ev.code == 0x110) {
             button = PlayerButton::Jump;
             player2 = false;
             valid = true;
-          } else if (ev.code == 0x111 /* BTN_RIGHT */) {
-            button = PlayerButton::Jump;
-            player2 = true;
-            valid = true;
-          }
-        } else if (ev.deviceType == CONTROLLER) {
-          if (ev.code == 0x130 /* BTN_A */ || ev.code == 0x137 /* BTN_TR */) {
-            button = PlayerButton::Jump;
-            player2 = false;
-            valid = true;
-          } else if (ev.code == 0x136 /* BTN_TL */) {
+          } else if (ev.code == 0x111) {
             button = PlayerButton::Jump;
             player2 = true;
             valid = true;
@@ -355,7 +528,7 @@ getPendingClicksFromSharedMemory(double lastTime, double targetTime,
       if (valid) {
         PlayerButtonCommand cmd;
         cmd.m_button = button;
-        cmd.m_isPlayer2 = player2;
+        cmd.m_isPlayer2 = player2 && isTwoPlayer;
         cmd.m_isPush = (ev.value != 0);
         cmd.m_timestamp = timestamp;
         pending.push_back(cmd);
@@ -1020,14 +1193,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-           auto fakePos = m_fields->m_fakePlayer1->getPosition();
-           auto fakeRobPos = m_fields->m_fakePlayer1->m_position;
-           if (m_player1->m_stateDartSlide > 0 && !m_player1->m_isOnSlope) {
-             fakePos.y = origP1.y;
-             fakeRobPos.y = origP1Rob.y;
-           }
-           m_player1->CCNode::setPosition(fakePos);
-           m_player1->m_position = fakeRobPos;
+          auto fakePos = m_fields->m_fakePlayer1->getPosition();
+          auto fakeRobPos = m_fields->m_fakePlayer1->m_position;
+          if (m_player1->m_stateDartSlide > 0 && !m_player1->m_isOnSlope) {
+            fakePos.y = origP1.y;
+            fakeRobPos.y = origP1Rob.y;
+          }
+          m_player1->CCNode::setPosition(fakePos);
+          m_player1->m_position = fakeRobPos;
         }
       }
     }
@@ -1109,14 +1282,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-           auto fakePos = m_fields->m_fakePlayer2->getPosition();
-           auto fakeRobPos = m_fields->m_fakePlayer2->m_position;
-           if (m_player2->m_stateDartSlide > 0 && !m_player2->m_isOnSlope) {
-             fakePos.y = origP2.y;
-             fakeRobPos.y = origP2Rob.y;
-           }
-           m_player2->CCNode::setPosition(fakePos);
-           m_player2->m_position = fakeRobPos;
+          auto fakePos = m_fields->m_fakePlayer2->getPosition();
+          auto fakeRobPos = m_fields->m_fakePlayer2->m_position;
+          if (m_player2->m_stateDartSlide > 0 && !m_player2->m_isOnSlope) {
+            fakePos.y = origP2.y;
+            fakeRobPos.y = origP2Rob.y;
+          }
+          m_player2->CCNode::setPosition(fakePos);
+          m_player2->m_position = fakeRobPos;
         }
       }
     }

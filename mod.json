@@ -8,12 +8,16 @@
 	},
 	"id": "square3ang.cbfextrapolate",
 	"name": "CBF Extrapolate",
-	"version": "v2.3.2",
+	"version": "v2.3.3",
 	"developer": "square3ang",
 	"description": "Frame extrapolation for smoother rendering.",
 	"dependencies": {
 		"syzzi.click_between_frames": {
 			"version": ">=v1.0.5",
+			"required": false
+		},
+		"geode.custom-keybinds": {
+			"version": ">=v2.0.0",
 			"required": false
 		}
 	},

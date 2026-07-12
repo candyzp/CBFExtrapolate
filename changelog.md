@@ -1,3 +1,6 @@
+# 2.3.3
+- Keybind support for Linux
+
 # 2.3.2
 - Fixed D-block issue (again)
 
