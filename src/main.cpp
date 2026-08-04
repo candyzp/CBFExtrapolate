@@ -1142,35 +1142,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
-    if (hasP1 && simulatedP1) {
-      m_player1->CCNode::setPosition(origP1);
-      m_player1->m_position = origP1Rob;
-
-      if (hasTrail1) {
-        m_player1->m_waveTrail->m_currentPoint = origCurrentPoint1;
-        auto *pointArray = m_player1->m_waveTrail->m_pointArray;
-        if (pointArray) {
-          while (pointArray->count() > origTrailCount1) {
-            pointArray->removeLastObject();
-          }
-        }
-        m_player1->m_waveTrail->updateStroke(0.f);
-      }
+    if (hasP1 && simulatedP1 && savedP1State) {
+      restoreRenderPlayerState(m_player1, origP1State);
     }
-    if (hasP2 && simulatedP2) {
-      m_player2->CCNode::setPosition(origP2);
-      m_player2->m_position = origP2Rob;
-
-      if (hasTrail2) {
-        m_player2->m_waveTrail->m_currentPoint = origCurrentPoint2;
-        auto *pointArray = m_player2->m_waveTrail->m_pointArray;
-        if (pointArray) {
-          while (pointArray->count() > origTrailCount2) {
-            pointArray->removeLastObject();
-          }
-        }
-        m_player2->m_waveTrail->updateStroke(0.f);
-      }
+    if (hasP2 && simulatedP2 && savedP2State) {
+      restoreRenderPlayerState(m_player2, origP2State);
     }
 
     m_playerDied = origPlayerDied;
