@@ -62,5 +62,3 @@ build-*/
 # CLion
 .idea/
 /cmake-build-*/
-
-compile_commands.json
