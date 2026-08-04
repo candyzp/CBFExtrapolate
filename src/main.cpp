@@ -728,18 +728,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
     Bot::get()->trajectory().deactivateAllRemembered();
 
-    CCPoint origP1 = {0, 0};
-    CCPoint origP1Rob = {0, 0};
-    int origTrailCount1 = 0;
-    CCPoint origCurrentPoint1 = {0, 0};
-    bool hasTrail1 = false;
+    RenderPlayerState origP1State;
+    bool savedP1State = false;
     bool simulatedP1 = false;
 
-    CCPoint origP2 = {0, 0};
-    CCPoint origP2Rob = {0, 0};
-    int origTrailCount2 = 0;
-    CCPoint origCurrentPoint2 = {0, 0};
-    bool hasTrail2 = false;
+    RenderPlayerState origP2State;
+    bool savedP2State = false;
     bool simulatedP2 = false;
 
     CCPoint origObj = {0, 0};
