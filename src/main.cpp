@@ -9,48 +9,16 @@
 #include <Geode/binding/GameManager.hpp>
 #include <Geode/binding/LevelSettingsObject.hpp>
 #include <Geode/binding/PauseLayer.hpp>
+#include <Geode/binding/RingObject.hpp>
 #include <Geode/modify/EnhancedGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
-#include <Geode/modify/GJGroundLayer.hpp>
 #include <Geode/modify/HardStreak.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
 
-#ifdef GEODE_IS_WINDOWS
-#include <atomic>
-
-enum DeviceType : int8_t {
-  MOUSE,
-  TOUCHPAD,
-  KEYBOARD,
-  TOUCHSCREEN,
-  CONTROLLER,
-  UNKNOWN
-};
-
-struct __attribute__((packed)) LinuxInputEvent {
-  int64_t time;
-  uint16_t type;
-  uint16_t code;
-  int32_t value;
-  DeviceType deviceType;
-};
-
-constexpr size_t RING_BUFFER_SIZE = 256;
-
-struct __attribute__((packed)) SharedMemory {
-  volatile uint32_t head;
-  volatile uint32_t tail;
-  volatile uint32_t error_flag;
-  volatile uint32_t heartbeat;
-  LinuxInputEvent events[RING_BUFFER_SIZE];
-};
-
-static HANDLE g_hShmFile = NULL;
-static HANDLE g_hShmMapping = NULL;
-static SharedMemory *g_pSharedMem = nullptr;
-#endif
+#include <algorithm>
+#include <vector>
 
 using namespace geode::prelude;
 
@@ -68,14 +36,6 @@ $on_mod(Loaded) {
     g_cbfSoftToggle = m->getSettingValue<bool>("soft-toggle");
     listenForSettingChanges<bool>(
         "soft-toggle", [](bool value) { g_cbfSoftToggle = value; }, m);
-
-#ifdef GEODE_IS_WINDOWS
-    if (geode::utils::platform::isWine()) {
-      g_linuxNative = m->getSettingValue<bool>("wine-workaround");
-      listenForSettingChanges<bool>(
-          "wine-workaround", [](bool value) { g_linuxNative = value; }, m);
-    }
-#endif
   }
 }
 
@@ -258,287 +218,6 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
   player = nullptr;
 }
 
-#ifdef GEODE_IS_WINDOWS
-inline void initSharedMemory() {
-  if (g_pSharedMem)
-    return;
-  if (!g_linuxNative)
-    return;
-
-  std::string shmName = "cbf-" + std::to_string(GetCurrentProcessId());
-  std::string winShmPath = std::string("Z:\\dev\\shm\\") + shmName;
-
-  g_hShmFile = CreateFileA(winShmPath.c_str(), GENERIC_READ,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (g_hShmFile == INVALID_HANDLE_VALUE) {
-    g_hShmFile = NULL;
-    return;
-  }
-
-  g_hShmMapping = CreateFileMappingA(g_hShmFile, NULL, PAGE_READONLY, 0,
-                                     sizeof(SharedMemory), NULL);
-  if (!g_hShmMapping) {
-    CloseHandle(g_hShmFile);
-    g_hShmFile = NULL;
-    return;
-  }
-
-  g_pSharedMem = static_cast<SharedMemory *>(
-      MapViewOfFile(g_hShmMapping, FILE_MAP_READ, 0, 0, sizeof(SharedMemory)));
-  if (!g_pSharedMem) {
-    CloseHandle(g_hShmMapping);
-    CloseHandle(g_hShmFile);
-    g_hShmMapping = NULL;
-    g_hShmFile = NULL;
-  }
-}
-
-inline cocos2d::enumKeyCodes evdevToCocos(uint16_t code) {
-  switch (code) {
-  case 57:
-    return cocos2d::KEY_Space;
-  case 17:
-    return cocos2d::KEY_W;
-  case 103:
-    return cocos2d::KEY_ArrowUp;
-  case 105:
-    return cocos2d::KEY_ArrowLeft;
-  case 106:
-    return cocos2d::KEY_ArrowRight;
-  case 108:
-    return cocos2d::KEY_ArrowDown;
-  case 30:
-    return cocos2d::KEY_A;
-  case 32:
-    return cocos2d::KEY_D;
-  case 44:
-    return cocos2d::KEY_Z;
-  case 45:
-    return cocos2d::KEY_X;
-  case 25:
-    return cocos2d::KEY_P;
-  case 16:
-    return cocos2d::KEY_Q;
-  case 18:
-    return cocos2d::KEY_E;
-  case 19:
-    return cocos2d::KEY_R;
-  case 20:
-    return cocos2d::KEY_T;
-  case 21:
-    return cocos2d::KEY_Y;
-  case 22:
-    return cocos2d::KEY_U;
-  case 23:
-    return cocos2d::KEY_I;
-  case 24:
-    return cocos2d::KEY_O;
-  case 31:
-    return cocos2d::KEY_S;
-  case 33:
-    return cocos2d::KEY_F;
-  case 34:
-    return cocos2d::KEY_G;
-  case 35:
-    return cocos2d::KEY_H;
-  case 36:
-    return cocos2d::KEY_J;
-  case 37:
-    return cocos2d::KEY_K;
-  case 38:
-    return cocos2d::KEY_L;
-  case 46:
-    return cocos2d::KEY_C;
-  case 47:
-    return cocos2d::KEY_V;
-  case 48:
-    return cocos2d::KEY_B;
-  case 49:
-    return cocos2d::KEY_N;
-  case 50:
-    return cocos2d::KEY_M;
-  case 2:
-    return cocos2d::KEY_One;
-  case 3:
-    return cocos2d::KEY_Two;
-  case 4:
-    return cocos2d::KEY_Three;
-  case 5:
-    return cocos2d::KEY_Four;
-  case 6:
-    return cocos2d::KEY_Five;
-  case 7:
-    return cocos2d::KEY_Six;
-  case 8:
-    return cocos2d::KEY_Seven;
-  case 9:
-    return cocos2d::KEY_Eight;
-  case 10:
-    return cocos2d::KEY_Nine;
-  case 11:
-    return cocos2d::KEY_Zero;
-  case 82:
-    return cocos2d::KEY_NumPad0;
-  case 79:
-    return cocos2d::KEY_NumPad1;
-  case 80:
-    return cocos2d::KEY_NumPad2;
-  case 81:
-    return cocos2d::KEY_NumPad3;
-  case 75:
-    return cocos2d::KEY_NumPad4;
-  case 76:
-    return cocos2d::KEY_NumPad5;
-  case 77:
-    return cocos2d::KEY_NumPad6;
-  case 71:
-    return cocos2d::KEY_NumPad7;
-  case 72:
-    return cocos2d::KEY_NumPad8;
-  case 73:
-    return cocos2d::KEY_NumPad9;
-  case 28:
-    return cocos2d::KEY_Enter;
-  case 1:
-    return cocos2d::KEY_Escape;
-  case 42:
-    return cocos2d::KEY_LeftShift;
-  case 54:
-    return cocos2d::KEY_RightShift;
-  case 29:
-    return cocos2d::KEY_LeftControl;
-  case 97:
-    return cocos2d::KEY_RightControl;
-  case 56:
-    return cocos2d::KEY_LeftMenu;
-  case 100:
-    return cocos2d::KEY_RightMenu;
-  case 0x130:
-    return cocos2d::CONTROLLER_A;
-  case 0x131:
-    return cocos2d::CONTROLLER_B;
-  case 0x132:
-    return cocos2d::CONTROLLER_X;
-  case 0x133:
-    return cocos2d::CONTROLLER_Y;
-  case 0x136:
-    return cocos2d::CONTROLLER_LB;
-  case 0x137:
-    return cocos2d::CONTROLLER_RB;
-  case 0x138:
-    return cocos2d::CONTROLLER_LT;
-  case 0x139:
-    return cocos2d::CONTROLLER_RT;
-  case 0x13b:
-    return cocos2d::CONTROLLER_Start;
-  case 0x13a:
-    return cocos2d::CONTROLLER_Back;
-  default:
-    return cocos2d::KEY_None;
-  }
-}
-
-inline bool containsKey(const std::vector<cocos2d::enumKeyCodes> &vec,
-                        cocos2d::enumKeyCodes val) {
-  for (auto x : vec) {
-    if (x == val)
-      return true;
-  }
-  return false;
-}
-
-inline std::vector<PlayerButtonCommand>
-getPendingClicksFromSharedMemory(double lastTime, double targetTime,
-                                 bool isTwoPlayer) {
-  std::vector<PlayerButtonCommand> pending;
-  if (!g_pSharedMem)
-    return pending;
-
-  uint32_t h = g_pSharedMem->head;
-  std::atomic_thread_fence(std::memory_order_acquire);
-  uint32_t t = g_pSharedMem->tail;
-
-  static auto customKeybindsMod =
-      Loader::get()->getLoadedMod("geode.custom-keybinds");
-  std::vector<cocos2d::enumKeyCodes> p1Binds;
-  std::vector<cocos2d::enumKeyCodes> p2Binds;
-
-  if (customKeybindsMod) {
-    auto val1 = customKeybindsMod->getSettingValue<std::vector<geode::Keybind>>(
-        "jump-p1");
-    for (const auto &bind : val1) {
-      p1Binds.push_back(bind.key);
-    }
-    auto val2 = customKeybindsMod->getSettingValue<std::vector<geode::Keybind>>(
-        "jump-p2");
-    for (const auto &bind : val2) {
-      p2Binds.push_back(bind.key);
-    }
-  } else {
-    p1Binds = {cocos2d::KEY_Space, cocos2d::KEY_W, cocos2d::CONTROLLER_A,
-               cocos2d::CONTROLLER_Up, cocos2d::CONTROLLER_RB};
-    p2Binds = {cocos2d::KEY_ArrowUp, cocos2d::CONTROLLER_LB,
-               cocos2d::CONTROLLER2_A};
-  }
-
-  while (t != h) {
-    const LinuxInputEvent &ev =
-        g_pSharedMem->events[t & (RING_BUFFER_SIZE - 1)];
-    t++;
-
-    double timestamp =
-        static_cast<double>(ev.time) / static_cast<double>(freq.QuadPart);
-
-    if (timestamp > lastTime && timestamp <= targetTime) {
-      PlayerButton button = PlayerButton::Jump;
-      bool player2 = false;
-      bool valid = false;
-
-      if (ev.type == 1) {
-        if (ev.deviceType == KEYBOARD || ev.deviceType == CONTROLLER) {
-          cocos2d::enumKeyCodes cocosKey = evdevToCocos(ev.code);
-          if (cocosKey != cocos2d::KEY_None) {
-            bool isP1 = containsKey(p1Binds, cocosKey);
-            bool isP2 = containsKey(p2Binds, cocosKey);
-
-            if (isP1) {
-              button = PlayerButton::Jump;
-              player2 = false;
-              valid = true;
-            } else if (isP2) {
-              button = PlayerButton::Jump;
-              player2 = true;
-              valid = true;
-            }
-          }
-        } else if (ev.deviceType == MOUSE || ev.deviceType == TOUCHPAD) {
-          if (ev.code == 0x110) {
-            button = PlayerButton::Jump;
-            player2 = false;
-            valid = true;
-          } else if (ev.code == 0x111) {
-            button = PlayerButton::Jump;
-            player2 = true;
-            valid = true;
-          }
-        }
-      }
-
-      if (valid) {
-        PlayerButtonCommand cmd;
-        cmd.m_button = button;
-        cmd.m_isPlayer2 = player2 && isTwoPlayer;
-        cmd.m_isPush = (ev.value != 0);
-        cmd.m_timestamp = timestamp;
-        pending.push_back(cmd);
-      }
-    }
-  }
-  return pending;
-}
-#endif
-
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
     float cameraFlip;
@@ -613,10 +292,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float rotation;
     float offset;
     float unk;
-    bool showGround;
-    bool showGround1;
-    bool showGround2;
-    bool cameraRotated;
   };
 
   GroundState saveGroundState(GJGroundLayer *ground) {
@@ -629,10 +304,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
       state.rotation = ground->getRotation();
       state.offset = ground->m_ground1Offset;
       state.unk = ground->m_unk1cc;
-      state.showGround = ground->m_showGround;
-      state.showGround1 = ground->m_showGround1;
-      state.showGround2 = ground->m_showGround2;
-      state.cameraRotated = ground->m_cameraRotated;
     }
     return state;
   }
@@ -646,10 +317,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
       ground->setRotation(state.rotation);
       ground->m_ground1Offset = state.offset;
       ground->m_unk1cc = state.unk;
-      ground->m_showGround = state.showGround;
-      ground->m_showGround1 = state.showGround1;
-      ground->m_showGround2 = state.showGround2;
-      ground->m_cameraRotated = state.cameraRotated;
     }
   }
 
@@ -660,23 +327,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float scaleX;
     float scaleY;
     bool visible;
-    unsigned char opacity;
-    bool hasOpacity;
   };
 
   void saveNodePositionsRecursive(cocos2d::CCNode *node,
                                   std::vector<SavedNodeState> &saved) {
     if (!node)
       return;
-    unsigned char opacity = 255;
-    bool hasOpacity = false;
-    if (auto rgba = dynamic_cast<cocos2d::CCRGBAProtocol *>(node)) {
-      opacity = rgba->getOpacity();
-      hasOpacity = true;
-    }
     saved.push_back({node, node->getPosition(), node->getRotation(),
-                     node->getScaleX(), node->getScaleY(), node->isVisible(),
-                     opacity, hasOpacity});
+                     node->getScaleX(), node->getScaleY(), node->isVisible()});
     if (node->getChildren()) {
       for (auto *child :
            geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
@@ -713,11 +371,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
         state.node->setScaleX(state.scaleX);
         state.node->setScaleY(state.scaleY);
         state.node->setVisible(state.visible);
-        if (state.hasOpacity) {
-          if (auto rgba = dynamic_cast<cocos2d::CCRGBAProtocol *>(state.node)) {
-            rgba->setOpacity(state.opacity);
-          }
-        }
       }
     }
   }
@@ -1042,17 +695,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
               if (player->m_collisionLogRight)
                 player->m_collisionLogRight->removeAllObjects();
 
-              int origNoAutoJump = player->m_stateNoAutoJump;
-              int origDartSlide = player->m_stateDartSlide;
-              int origHitHead = player->m_stateHitHead;
-              int origFlipGravity = player->m_stateFlipGravity;
-
               player->update(delta);
-
-              player->m_stateNoAutoJump = origNoAutoJump;
-              player->m_stateDartSlide = origDartSlide;
-              player->m_stateHitHead = origHitHead;
-              player->m_stateFlipGravity = origFlipGravity;
 
               float yBefore = player->getPositionY();
               double yVelBefore = player->m_yVelocity;
@@ -1150,29 +793,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (hasCBF) {
             bool isTwoPlayer =
                 m_levelSettings && m_levelSettings->m_twoPlayerMode;
-#ifdef GEODE_IS_WINDOWS
-            if (g_linuxNative) {
-              initSharedMemory();
-              auto clicks = getPendingClicksFromSharedMemory(
-                  state.lastTime, tCurrentClamped, isTwoPlayer);
-              for (const auto &cmd : clicks) {
-                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget) {
-                  pendingClicks.push_back(cmd);
-                }
+            for (const auto &cmd : m_queuedButtons) {
+              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
+                  cmd.m_timestamp <= tCurrentClamped) {
+                pendingClicks.push_back(cmd);
               }
-            } else {
-#endif
-              for (const auto &cmd : m_queuedButtons) {
-                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget && cmd.m_timestamp > state.lastTime &&
-                    cmd.m_timestamp <= tCurrentClamped) {
-                  pendingClicks.push_back(cmd);
-                }
-              }
-#ifdef GEODE_IS_WINDOWS
             }
-#endif
           }
 
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
@@ -1193,14 +820,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-          auto fakePos = m_fields->m_fakePlayer1->getPosition();
-          auto fakeRobPos = m_fields->m_fakePlayer1->m_position;
-          if (m_player1->m_stateDartSlide > 0 && !m_player1->m_isOnSlope) {
-            fakePos.y = origP1.y;
-            fakeRobPos.y = origP1Rob.y;
-          }
-          m_player1->CCNode::setPosition(fakePos);
-          m_player1->m_position = fakeRobPos;
+          m_player1->CCNode::setPosition(
+              m_fields->m_fakePlayer1->getPosition());
+          m_player1->m_position = m_fields->m_fakePlayer1->m_position;
         }
       }
     }
@@ -1239,29 +861,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (hasCBF) {
             bool isTwoPlayer =
                 m_levelSettings && m_levelSettings->m_twoPlayerMode;
-#ifdef GEODE_IS_WINDOWS
-            if (g_linuxNative) {
-              initSharedMemory();
-              auto clicks = getPendingClicksFromSharedMemory(
-                  state.lastTime, tCurrentClamped, isTwoPlayer);
-              for (const auto &cmd : clicks) {
-                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget) {
-                  pendingClicks.push_back(cmd);
-                }
+            for (const auto &cmd : m_queuedButtons) {
+              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
+                  cmd.m_timestamp <= tCurrentClamped) {
+                pendingClicks.push_back(cmd);
               }
-            } else {
-#endif
-              for (const auto &cmd : m_queuedButtons) {
-                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget && cmd.m_timestamp > state.lastTime &&
-                    cmd.m_timestamp <= tCurrentClamped) {
-                  pendingClicks.push_back(cmd);
-                }
-              }
-#ifdef GEODE_IS_WINDOWS
             }
-#endif
           }
 
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
@@ -1282,14 +888,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
           extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
                             tCurrentClamped, timeScale);
 
-          auto fakePos = m_fields->m_fakePlayer2->getPosition();
-          auto fakeRobPos = m_fields->m_fakePlayer2->m_position;
-          if (m_player2->m_stateDartSlide > 0 && !m_player2->m_isOnSlope) {
-            fakePos.y = origP2.y;
-            fakeRobPos.y = origP2Rob.y;
-          }
-          m_player2->CCNode::setPosition(fakePos);
-          m_player2->m_position = fakeRobPos;
+          m_player2->CCNode::setPosition(
+              m_fields->m_fakePlayer2->getPosition());
+          m_player2->m_position = m_fields->m_fakePlayer2->m_position;
         }
       }
     }
@@ -1348,9 +949,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         bool tempCalculate = m_calculateTargetHeightOffset;
         m_calculateTargetHeightOffset = false;
-        g_extrapolating = true;
         this->updateCamera(dtFloat);
-        g_extrapolating = false;
         m_calculateTargetHeightOffset = tempCalculate;
       }
     }
@@ -1717,21 +1316,5 @@ class $modify(MyEnhancedGameObject, EnhancedGameObject) {
     } else {
       EnhancedGameObject::activatedByPlayer(player);
     }
-  }
-};
-
-class $modify(MyGJGroundLayer, GJGroundLayer) {
-  void fadeInGround(float duration) {
-    if (g_extrapolating) {
-      return;
-    }
-    GJGroundLayer::fadeInGround(duration);
-  }
-
-  void fadeOutGround(float duration) {
-    if (g_extrapolating) {
-      return;
-    }
-    GJGroundLayer::fadeOutGround(duration);
   }
 };
