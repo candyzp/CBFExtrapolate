@@ -14,11 +14,19 @@ inline LARGE_INTEGER freq = []() {
   return f;
 }();
 
-inline bool g_linuxNative = false;
+inline bool linuxNative = []() {
+  if (geode::utils::platform::isWine()) {
+    if (auto m =
+            geode::Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
+      return m->getSettingValue<bool>("wine-workaround");
+    }
+  }
+  return false;
+}();
 
 inline TimestampType getCurrentTimestamp() {
   LARGE_INTEGER t;
-  if (g_linuxNative) {
+  if (linuxNative) {
     GetSystemTimePreciseAsFileTime((FILETIME *)&t);
   } else {
     QueryPerformanceCounter(&t);
