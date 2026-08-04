@@ -59,10 +59,9 @@ int checkPlayerCollisions(GJBaseGameLayer *gameLayer, PlayerObject *player) {
   float angleTransformed = (unkAngleHalved + 90.0) - someValue;
 
   bool groundExists =
-      !gameLayer->m_gameState.m_unkBool8 &&
-      (player->m_isShip || player->m_isBird || player->m_isDart ||
-       player->m_isSwing || player->m_isBall || player->m_isSpider ||
-       gameLayer->m_gameState.m_isDualMode);
+      player->m_isShip || player->m_isBird || player->m_isDart ||
+      player->m_isSwing || player->m_isBall || player->m_isSpider ||
+      gameLayer->m_gameState.m_isDualMode;
 
   // bool isOutOfBounds = player->m_isOutOfBounds;
   player->m_isOutOfBounds = false;
