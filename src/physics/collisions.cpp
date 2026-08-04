@@ -321,18 +321,25 @@ void bumpPlayerFromGJBGL(GJBaseGameLayer *pl, PlayerObject *player,
 static void *g_PlayerObject_getOrientedBox = nullptr;
 static void *g_PlayerObject_updateOrientedBox = nullptr;
 
+// These old native offsets are not stable across iOS Geometry Dash builds.
+// Keep them unset; fake-player prediction uses the safe rectangle/radius path.
 $execute {
-  g_PlayerObject_getOrientedBox =
-      reinterpret_cast<void *>(geode::base::get() + 0x38a8c0);
-  g_PlayerObject_updateOrientedBox =
-      reinterpret_cast<void *>(geode::base::get() + 0x19e5f0);
+  g_PlayerObject_getOrientedBox = nullptr;
+  g_PlayerObject_updateOrientedBox = nullptr;
 }
 
 void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
                            gd::vector<GameObject *> *objects, int objectCount,
                            float dt, bool enableSolids) {
-  if (objectCount <= 0)
+  if (!pl || !player || !objects || objectCount <= 0)
     return;
+
+  const int availableObjects = static_cast<int>(objects->size());
+  if (availableObjects <= 0)
+    return;
+
+  const int safeObjectCount = std::min(objectCount, availableObjects);
+  const bool isFakePlayer = Bot::get()->trajectory().isFakePlayer(player);
 
   CCRect playerRect = player->getObjectRect();
 
@@ -341,7 +348,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
   [[maybe_unused]] float playerMinY = player->getObjectRect().getMinY();
   [[maybe_unused]] float playerMaxY = player->getObjectRect().getMaxY();
 
-  for (int i = 0; i < objectCount; i++) {
+  for (int i = 0; i < safeObjectCount; i++) {
     GameObject *object = objects->at(i);
 
     if (!object)
@@ -359,7 +366,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     if (object->m_objectType == GameObjectType::Solid ||
         object->m_objectType == GameObjectType::Breakable) {
-      if (Bot::get()->trajectory().isFakePlayer(player) && !enableSolids) {
+      if (isFakePlayer && !enableSolids) {
         continue;
       }
 
@@ -381,7 +388,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     if (object->m_objectType == GameObjectType::Hazard ||
         object->m_objectType == GameObjectType::AnimatedHazard) {
-      if (Bot::get()->trajectory().isFakePlayer(player)) {
+      if (isFakePlayer) {
         continue;
       }
       if (pl->m_hazardCollisionObjectsCount <
@@ -424,12 +431,19 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     bool overlaps = true;
 
-    if (object->m_shouldUseOuterOb &&
-        (!pl->m_levelSettings->m_fixRadiusCollision ||
-         object->m_objectRadius <= 0.0)) {
+    const bool needsOuterOBB =
+        object->m_shouldUseOuterOb &&
+        (!pl->m_levelSettings || !pl->m_levelSettings->m_fixRadiusCollision ||
+         object->m_objectRadius <= 0.0);
+
+    // The fake player is only a visual prediction. On iOS, avoid the unsafe
+    // oriented-box call here and keep the rectangle/radius result above.
+    if (needsOuterOBB && !isFakePlayer) {
       OBB2D *box = object->getOrientedBox();
       player->updateOrientedBox();
-      OBB2D *playerBox = ((GameObject *)(player))->getOrientedBox();
+      OBB2D *playerBox = static_cast<GameObject *>(player)->getOrientedBox();
+      if (!box || !playerBox)
+        continue;
       overlaps = box->overlaps1Way(playerBox);
     }
 
