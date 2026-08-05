@@ -394,8 +394,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
       player->m_waveTrail->m_currentPoint = state.waveTrailCurrentPoint;
       auto *pointArray = player->m_waveTrail->m_pointArray;
       if (pointArray) {
-        while (pointArray->count() > state.waveTrailCount) {
-          pointArray->removeLastObject();
+        int count = pointArray->count();
+        if (count > state.waveTrailCount) {
+          int diff = count - state.waveTrailCount;
+          if (diff > 10) {
+            pointArray->removeAllObjects();
+          } else {
+            while (pointArray->count() > state.waveTrailCount) {
+              pointArray->removeLastObject();
+            }
+          }
         }
       }
       player->m_waveTrail->updateStroke(0.f);
@@ -495,7 +503,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  // OPTIMIZATION: Swapped from unordered_set to vector for massive frame-time boost
   void collectAliveNodesRecursive(
       cocos2d::CCNode *node, std::vector<cocos2d::CCNode *> &alive) {
     if (!node)
@@ -517,10 +524,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
 
     std::vector<cocos2d::CCNode *> alive;
-    alive.reserve(saved.size()); // Pre-allocate to prevent mid-frame sizing overhead
+    alive.reserve(saved.size());
     collectAliveNodesRecursive(root, alive);
 
-    // O(log n) pointer lookups instead of hashing overhead
     std::sort(alive.begin(), alive.end());
 
     for (const auto &state : saved) {
@@ -551,6 +557,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
   };
 
   static void onModify(auto &self) {
+    (void)self.setHookPriority("GJBaseGameLayer::resetLevel", Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::flipGravity",
@@ -561,6 +568,26 @@ class $modify(MyBGL, GJBaseGameLayer) {
                                Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::toggleFlipped",
                                Priority::VeryEarly);
+  }
+
+  void resetLevel() {
+    GJBaseGameLayer::resetLevel();
+
+    if (!g_softToggle) {
+      m_fields->p1 = PlayerState();
+      m_fields->p2 = PlayerState();
+
+      if (m_fields->m_fakePlayer1 && m_fields->m_fakePlayer1->m_waveTrail) {
+        if (m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
+          m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
+        }
+      }
+      if (m_fields->m_fakePlayer2 && m_fields->m_fakePlayer2->m_waveTrail) {
+        if (m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
+          m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
+        }
+      }
+    }
   }
 
   void flipGravity(PlayerObject *player, bool gravity, bool unk) {
@@ -645,7 +672,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   PlayerObject *createFakePlayer(bool isPlayer2) {
-
     auto player = PlayerObject::create(1, 1, this, this, true);
     if (player) {
       player->setVisible(false);
@@ -764,7 +790,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     std::vector<SavedNodeState> savedGroundChildren1;
     std::vector<SavedNodeState> savedGroundChildren2;
-    savedGroundChildren1.reserve(64); // Prevent reallocations
+    savedGroundChildren1.reserve(64);
     savedGroundChildren2.reserve(64);
 
     saveNodePositionsRecursive(m_groundLayer, savedGroundChildren1);
