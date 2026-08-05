@@ -225,6 +225,44 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
   player = nullptr;
 }
 
+class $modify(MyPlayLayer, PlayLayer) {
+  void resetLevel() {
+    PlayLayer::resetLevel();
+
+    if (!g_softToggle) {
+      if (m_player1) {
+        if (auto *myBgl = static_cast<MyBGL *>(this)) {
+          myBgl->m_fields->p1 = PlayerState();
+        }
+        if (m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
+          m_player1->m_waveTrail->m_pointArray->removeAllObjects();
+        }
+      }
+      if (m_player2) {
+        if (auto *myBgl = static_cast<MyBGL *>(this)) {
+          myBgl->m_fields->p2 = PlayerState();
+        }
+        if (m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
+          m_player2->m_waveTrail->m_pointArray->removeAllObjects();
+        }
+      }
+
+      if (auto *myBgl = static_cast<MyBGL *>(this)) {
+        if (myBgl->m_fields->m_fakePlayer1 && myBgl->m_fields->m_fakePlayer1->m_waveTrail) {
+          if (myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
+            myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
+          }
+        }
+        if (myBgl->m_fields->m_fakePlayer2 && myBgl->m_fields->m_fakePlayer2->m_waveTrail) {
+          if (myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
+            myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
+          }
+        }
+      }
+    }
+  }
+};
+
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
     float cameraFlip;
@@ -557,7 +595,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
   };
 
   static void onModify(auto &self) {
-    (void)self.setHookPriority("GJBaseGameLayer::resetLevel", Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
     (void)self.setHookPriority("GJBaseGameLayer::flipGravity",
@@ -568,26 +605,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
                                Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::toggleFlipped",
                                Priority::VeryEarly);
-  }
-
-  void resetLevel() {
-    GJBaseGameLayer::resetLevel();
-
-    if (!g_softToggle) {
-      m_fields->p1 = PlayerState();
-      m_fields->p2 = PlayerState();
-
-      if (m_fields->m_fakePlayer1 && m_fields->m_fakePlayer1->m_waveTrail) {
-        if (m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
-          m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
-        }
-      }
-      if (m_fields->m_fakePlayer2 && m_fields->m_fakePlayer2->m_waveTrail) {
-        if (m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
-          m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
-        }
-      }
-    }
   }
 
   void flipGravity(PlayerObject *player, bool gravity, bool unk) {
