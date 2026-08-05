@@ -24,9 +24,6 @@
 
 using namespace geode::prelude;
 
-// ==========================================
-// OPTIMIZATIONS: Capped Vectors to Prevent Leaks
-// ==========================================
 std::vector<CCNode*> g_activeNodes;
 
 void addNodeOptimized(CCNode* node) {
@@ -282,27 +279,44 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
 
 static bool isFakePlayer(PlayerObject *player);
 
+static void detachFakePlayer(PlayerObject *&player) {
+  if (!player)
+    return;
+
+  auto &trajectory = Bot::get()->trajectory();
+  if (trajectory.m_fakePlayer1 == player)
+    trajectory.m_fakePlayer1 = nullptr;
+  if (trajectory.unsafeInner()->m_fakePlayer1 == player)
+    trajectory.unsafeInner()->m_fakePlayer1 = nullptr;
+  if (trajectory.m_fakePlayer2 == player)
+    trajectory.m_fakePlayer2 = nullptr;
+  if (trajectory.unsafeInner()->m_fakePlayer2 == player)
+    trajectory.unsafeInner()->m_fakePlayer2 = nullptr;
+
+  clearPlayerExtrapolationArtifacts(player, false);
+  player->stopAllActions();
+  player->unscheduleAllSelectors();
+  player->setVisible(false);
+}
+
 static void cleanUpFakePlayer(PlayerObject *&player) {
   if (!player)
     return;
 
   auto &trajectory = Bot::get()->trajectory();
-
-  if (trajectory.m_fakePlayer1 == player) {
+  if (trajectory.m_fakePlayer1 == player)
     trajectory.m_fakePlayer1 = nullptr;
-  }
-  if (trajectory.unsafeInner()->m_fakePlayer1 == player) {
+  if (trajectory.unsafeInner()->m_fakePlayer1 == player)
     trajectory.unsafeInner()->m_fakePlayer1 = nullptr;
-  }
-  if (trajectory.m_fakePlayer2 == player) {
+  if (trajectory.m_fakePlayer2 == player)
     trajectory.m_fakePlayer2 = nullptr;
-  }
-  if (trajectory.unsafeInner()->m_fakePlayer2 == player) {
+  if (trajectory.unsafeInner()->m_fakePlayer2 == player)
     trajectory.unsafeInner()->m_fakePlayer2 = nullptr;
-  }
 
+  clearPlayerExtrapolationArtifacts(player, false);
   player->stopAllActions();
   player->unscheduleAllSelectors();
+  player->setVisible(false);
 
   if (player->getParent()) {
     player->removeFromParentAndCleanup(true);
@@ -331,6 +345,70 @@ class $modify(MyBGL, GJBaseGameLayer) {
     cocos2d::CCPoint cameraOffset;
     float cameraZoom;
     float cameraAngle;
+  };
+
+  struct GroundState {
+    float x;
+    float y;
+    float scaleX;
+    float scaleY;
+    float rotation;
+    float offset;
+    float unk;
+  };
+
+  struct RenderPlayerState {
+    CCPoint nodePos = {0, 0};
+    CCPoint robPos = {0, 0};
+    float positionX = 0.f;
+    float positionY = 0.f;
+    float unmodifiedPositionX = 0.f;
+    float unmodifiedPositionY = 0.f;
+    CCPoint lastPosition = {0, 0};
+    CCPoint lastPortalPos = {0, 0};
+    float rotation = 0.f;
+    float scaleX = 1.f;
+    float scaleY = 1.f;
+    bool flipX = false;
+    bool flipY = false;
+    bool hasWaveTrail = false;
+    int waveTrailCount = 0;
+    CCPoint waveTrailCurrentPoint = {0, 0};
+  };
+
+  struct SavedNodeState {
+    cocos2d::CCNode *node = nullptr;
+    cocos2d::CCPoint position = {0, 0};
+    float rotation = 0.f;
+    float scaleX = 1.f;
+    float scaleY = 1.f;
+    bool visible = true;
+    bool hasRGBA = false;
+    GLubyte opacity = 255;
+    cocos2d::ccColor3B color = {255, 255, 255};
+  };
+
+  struct Fields {
+    PlayerState p1;
+    PlayerState p2;
+    PlayerObject *m_fakePlayer1 = nullptr;
+    PlayerObject *m_fakePlayer2 = nullptr;
+    bool m_enableSolidCollisions = true;
+    double m_teleportYOffset = 0.0;
+    std::vector<PlayerButtonCommand> m_pendingClicks1;
+    std::vector<PlayerButtonCommand> m_pendingClicks2;
+    std::vector<PlayerButtonCommand> m_sortedClicks;
+    std::vector<SavedNodeState> m_savedGroundChildren1;
+    std::vector<SavedNodeState> m_savedGroundChildren2;
+    std::vector<cocos2d::CCNode *> m_aliveNodes;
+    bool m_resetPending = false;
+    int m_skipFramesAfterReset = 0;
+    bool m_disableRestoreThisFrame = false;
+
+    ~Fields() {
+      cleanUpFakePlayer(m_fakePlayer1);
+      cleanUpFakePlayer(m_fakePlayer2);
+    }
   };
 
   CameraState saveCameraState() {
@@ -376,35 +454,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_gameState.m_cameraZoom = state.cameraZoom;
     m_gameState.m_cameraAngle = state.cameraAngle;
   }
-
-  struct GroundState {
-    float x;
-    float y;
-    float scaleX;
-    float scaleY;
-    float rotation;
-    float offset;
-    float unk;
-  };
-
-  struct RenderPlayerState {
-    CCPoint nodePos = {0, 0};
-    CCPoint robPos = {0, 0};
-    float positionX = 0.f;
-    float positionY = 0.f;
-    float unmodifiedPositionX = 0.f;
-    float unmodifiedPositionY = 0.f;
-    CCPoint lastPosition = {0, 0};
-    CCPoint lastPortalPos = {0, 0};
-    float rotation = 0.f;
-    float scaleX = 1.f;
-    float scaleY = 1.f;
-    bool flipX = false;
-    bool flipY = false;
-    bool hasWaveTrail = false;
-    int waveTrailCount = 0;
-    CCPoint waveTrailCurrentPoint = {0, 0};
-  };
 
   RenderPlayerState saveRenderPlayerState(PlayerObject *player) {
     RenderPlayerState state;
@@ -522,18 +571,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  struct SavedNodeState {
-    cocos2d::CCNode *node = nullptr;
-    cocos2d::CCPoint position = {0, 0};
-    float rotation = 0.f;
-    float scaleX = 1.f;
-    float scaleY = 1.f;
-    bool visible = true;
-    bool hasRGBA = false;
-    GLubyte opacity = 255;
-    cocos2d::ccColor3B color = {255, 255, 255};
-  };
-
   void saveRGBAState(cocos2d::CCNode *node, SavedNodeState &state) {
     if (auto *sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite *>(node)) {
       state.hasRGBA = true;
@@ -589,8 +626,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  void collectAliveNodesRecursive(
-      cocos2d::CCNode *node, std::vector<cocos2d::CCNode *> &alive) {
+  void collectAliveNodesRecursive(cocos2d::CCNode *node,
+                                  std::vector<cocos2d::CCNode *> &alive) {
     if (!node)
       return;
 
@@ -609,14 +646,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!root)
       return;
 
-    std::vector<cocos2d::CCNode *> alive;
-    alive.reserve(saved.size());
-    collectAliveNodesRecursive(root, alive);
-
-    std::sort(alive.begin(), alive.end());
+    m_fields->m_aliveNodes.clear();
+    m_fields->m_aliveNodes.reserve(saved.size());
+    collectAliveNodesRecursive(root, m_fields->m_aliveNodes);
+    std::sort(m_fields->m_aliveNodes.begin(), m_fields->m_aliveNodes.end());
 
     for (const auto &state : saved) {
-      if (!std::binary_search(alive.begin(), alive.end(), state.node))
+      if (!state.node)
+        continue;
+      if (!std::binary_search(m_fields->m_aliveNodes.begin(),
+                              m_fields->m_aliveNodes.end(), state.node))
         continue;
 
       state.node->setPosition(state.position);
@@ -627,26 +666,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
       restoreRGBAState(state.node, state);
     }
   }
-
-  struct Fields {
-    PlayerState p1;
-    PlayerState p2;
-    PlayerObject *m_fakePlayer1 = nullptr;
-    PlayerObject *m_fakePlayer2 = nullptr;
-    bool m_enableSolidCollisions = true;
-    double m_teleportYOffset = 0.0;
-    std::vector<PlayerButtonCommand> m_pendingClicks1;
-    std::vector<PlayerButtonCommand> m_pendingClicks2;
-    std::vector<PlayerButtonCommand> m_sortedClicks;
-    std::vector<SavedNodeState> m_savedGroundChildren1;
-    std::vector<SavedNodeState> m_savedGroundChildren2;
-    std::vector<cocos2d::CCNode *> m_aliveNodes;
-
-    ~Fields() {
-      cleanUpFakePlayer(m_fakePlayer1);
-      cleanUpFakePlayer(m_fakePlayer2);
-    }
-  };
 
   static void onModify(auto &self) {
     (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
@@ -659,6 +678,58 @@ class $modify(MyBGL, GJBaseGameLayer) {
                                Priority::VeryEarly);
     (void)self.setHookPriority("GJBaseGameLayer::toggleFlipped",
                                Priority::VeryEarly);
+  }
+
+  bool shouldSkipExtrapolationThisFrame() {
+    if (m_fields->m_resetPending) {
+      m_fields->m_resetPending = false;
+      m_fields->m_skipFramesAfterReset = 2;
+      m_fields->m_disableRestoreThisFrame = true;
+      return true;
+    }
+
+    if (m_fields->m_skipFramesAfterReset > 0) {
+      --m_fields->m_skipFramesAfterReset;
+      m_fields->m_disableRestoreThisFrame = true;
+      return true;
+    }
+
+    m_fields->m_disableRestoreThisFrame = false;
+    return false;
+  }
+
+  void invalidateFakePlayersForReset() {
+    detachFakePlayer(m_fields->m_fakePlayer1);
+    detachFakePlayer(m_fields->m_fakePlayer2);
+
+    auto &trajectory = Bot::get()->trajectory();
+    trajectory.m_fakePlayer1 = nullptr;
+    trajectory.m_fakePlayer2 = nullptr;
+    trajectory.unsafeInner()->m_fakePlayer1 = nullptr;
+    trajectory.unsafeInner()->m_fakePlayer2 = nullptr;
+  }
+
+  void ensureFakePlayersReady() {
+    if (!m_objectLayer)
+      return;
+
+    if (m_player1) {
+      if (!m_fields->m_fakePlayer1 || m_fields->m_fakePlayer1->getParent() != this) {
+        cleanUpFakePlayer(m_fields->m_fakePlayer1);
+        m_fields->m_fakePlayer1 = createFakePlayer(false);
+      }
+      Bot::get()->trajectory().m_fakePlayer1 = m_fields->m_fakePlayer1;
+      Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = m_fields->m_fakePlayer1;
+    }
+
+    if (m_player2) {
+      if (!m_fields->m_fakePlayer2 || m_fields->m_fakePlayer2->getParent() != this) {
+        cleanUpFakePlayer(m_fields->m_fakePlayer2);
+        m_fields->m_fakePlayer2 = createFakePlayer(true);
+      }
+      Bot::get()->trajectory().m_fakePlayer2 = m_fields->m_fakePlayer2;
+      Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = m_fields->m_fakePlayer2;
+    }
   }
 
   void flipGravity(PlayerObject *player, bool gravity, bool unk) {
@@ -791,6 +862,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    if (shouldSkipExtrapolationThisFrame()) {
+      invalidateFakePlayersForReset();
+      GJBaseGameLayer::visit();
+      return;
+    }
+
+    ensureFakePlayersReady();
+    Bot::get()->trajectory().deactivateAllRemembered();
+
     auto origTweenActions = m_gameState.m_tweenActions;
     auto origCameraOffset = m_gameState.m_cameraOffset;
     auto origCameraZoom = m_gameState.m_cameraZoom;
@@ -799,34 +879,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool origResetActiveObjects = m_resetActiveObjects;
 
     bool hasCBF = !g_cbfSoftToggle || m_clickBetweenSteps;
-
     bool origPlayerDied = m_playerDied;
     bool hasP1 = m_player1 != nullptr;
     bool hasP2 = m_player2 != nullptr;
-
-    if (m_objectLayer) {
-      if (hasP1) {
-        if (!m_fields->m_fakePlayer1 ||
-            m_fields->m_fakePlayer1->getParent() != this) {
-          cleanUpFakePlayer(m_fields->m_fakePlayer1);
-          m_fields->m_fakePlayer1 = createFakePlayer(false);
-        }
-        Bot::get()->trajectory().m_fakePlayer1 = m_fields->m_fakePlayer1;
-        Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 =
-            m_fields->m_fakePlayer1;
-      }
-      if (hasP2) {
-        if (!m_fields->m_fakePlayer2 ||
-            m_fields->m_fakePlayer2->getParent() != this) {
-          cleanUpFakePlayer(m_fields->m_fakePlayer2);
-          m_fields->m_fakePlayer2 = createFakePlayer(true);
-        }
-        Bot::get()->trajectory().m_fakePlayer2 = m_fields->m_fakePlayer2;
-        Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 =
-            m_fields->m_fakePlayer2;
-      }
-    }
-    Bot::get()->trajectory().deactivateAllRemembered();
 
     RenderPlayerState origP1State;
     bool savedP1State = false;
@@ -838,9 +893,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     CCPoint origObj = {0, 0};
     bool hasObj = m_objectLayer != nullptr;
+    if (hasObj) {
+      origObj = m_objectLayer->getPosition();
+    }
 
     float origObjScaleX = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
     float origObjScaleY = m_objectLayer ? m_objectLayer->getScaleY() : 1.f;
+    float origObjRot = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
+
     GroundState groundState1 = saveGroundState(m_groundLayer);
     GroundState groundState2 = saveGroundState(m_groundLayer2);
 
@@ -851,12 +911,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     saveNodePositionsRecursive(m_groundLayer, m_fields->m_savedGroundChildren1);
     saveNodePositionsRecursive(m_groundLayer2, m_fields->m_savedGroundChildren2);
-
-    float origObjRot = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
-
-    if (hasObj) {
-      origObj = m_objectLayer->getPosition();
-    }
 
     float origInShaderObjScaleX =
         m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
@@ -1186,10 +1240,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_objectLayer->setRotation(origObjRot);
     }
 
-    restoreGroundState(m_groundLayer, groundState1);
-    restoreGroundState(m_groundLayer2, groundState2);
-    restoreNodePositions(m_fields->m_savedGroundChildren1, m_groundLayer);
-    restoreNodePositions(m_fields->m_savedGroundChildren2, m_groundLayer2);
+    if (!m_fields->m_disableRestoreThisFrame) {
+      restoreGroundState(m_groundLayer, groundState1);
+      restoreGroundState(m_groundLayer2, groundState2);
+      restoreNodePositions(m_fields->m_savedGroundChildren1, m_groundLayer);
+      restoreNodePositions(m_fields->m_savedGroundChildren2, m_groundLayer2);
+    }
 
     if (hasBg) {
       m_background->setPosition(origBgPos);
@@ -1246,21 +1302,20 @@ class $modify(MyPlayLayer, PlayLayer) {
         myBgl->m_fields->p2 = PlayerState{};
         myBgl->m_fields->m_enableSolidCollisions = true;
         myBgl->m_fields->m_teleportYOffset = 0.0;
-
         myBgl->m_fields->m_pendingClicks1.clear();
         myBgl->m_fields->m_pendingClicks2.clear();
         myBgl->m_fields->m_sortedClicks.clear();
         myBgl->m_fields->m_savedGroundChildren1.clear();
         myBgl->m_fields->m_savedGroundChildren2.clear();
         myBgl->m_fields->m_aliveNodes.clear();
+        myBgl->m_fields->m_resetPending = true;
+        myBgl->m_fields->m_skipFramesAfterReset = 2;
+        myBgl->m_fields->m_disableRestoreThisFrame = true;
 
         clearPlayerExtrapolationArtifacts(m_player1, true);
         clearPlayerExtrapolationArtifacts(m_player2, true);
-        clearPlayerExtrapolationArtifacts(myBgl->m_fields->m_fakePlayer1, false);
-        clearPlayerExtrapolationArtifacts(myBgl->m_fields->m_fakePlayer2, false);
-
-        cleanUpFakePlayer(myBgl->m_fields->m_fakePlayer1);
-        cleanUpFakePlayer(myBgl->m_fields->m_fakePlayer2);
+        detachFakePlayer(myBgl->m_fields->m_fakePlayer1);
+        detachFakePlayer(myBgl->m_fields->m_fakePlayer2);
       }
 
       auto &trajectory = Bot::get()->trajectory();
@@ -1269,7 +1324,7 @@ class $modify(MyPlayLayer, PlayLayer) {
       trajectory.unsafeInner()->m_fakePlayer1 = nullptr;
       trajectory.unsafeInner()->m_fakePlayer2 = nullptr;
     } catch (...) {
-      log::error("Error during PlayLayer::resetLevel hard reset cleanup!");
+      log::error("Error during PlayLayer::resetLevel anti-spam cleanup!");
     }
   }
 };
@@ -1282,13 +1337,31 @@ class $modify(CBFEditorLayer, LevelEditorLayer) {
       g_extrapolating = false;
       g_extrapData.cleanup();
 
+      if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this))) {
+        myBgl->m_fields->p1 = PlayerState{};
+        myBgl->m_fields->p2 = PlayerState{};
+        myBgl->m_fields->m_enableSolidCollisions = true;
+        myBgl->m_fields->m_teleportYOffset = 0.0;
+        myBgl->m_fields->m_pendingClicks1.clear();
+        myBgl->m_fields->m_pendingClicks2.clear();
+        myBgl->m_fields->m_sortedClicks.clear();
+        myBgl->m_fields->m_savedGroundChildren1.clear();
+        myBgl->m_fields->m_savedGroundChildren2.clear();
+        myBgl->m_fields->m_aliveNodes.clear();
+        myBgl->m_fields->m_resetPending = true;
+        myBgl->m_fields->m_skipFramesAfterReset = 2;
+        myBgl->m_fields->m_disableRestoreThisFrame = true;
+        detachFakePlayer(myBgl->m_fields->m_fakePlayer1);
+        detachFakePlayer(myBgl->m_fields->m_fakePlayer2);
+      }
+
       auto &trajectory = Bot::get()->trajectory();
       trajectory.m_fakePlayer1 = nullptr;
       trajectory.m_fakePlayer2 = nullptr;
       trajectory.unsafeInner()->m_fakePlayer1 = nullptr;
       trajectory.unsafeInner()->m_fakePlayer2 = nullptr;
     } catch (...) {
-      log::error("Error during LevelEditorLayer::resetLevel hard reset cleanup!");
+      log::error("Error during LevelEditorLayer::resetLevel anti-spam cleanup!");
     }
   }
 };
