@@ -270,64 +270,6 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
 }
 
 // ==========================================
-// iOS INLINE FIX & SAFE CLEANUP
-// ==========================================
-
-class $modify(MyPlayLayer, PlayLayer) {
-  void resetLevel() {
-    PlayLayer::resetLevel();
-
-    try {
-      if (!g_softToggle) {
-        if (m_player1) {
-          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
-            myBgl->m_fields->p1 = PlayerState();
-          }
-          if (m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
-            m_player1->m_waveTrail->m_pointArray->removeAllObjects();
-          }
-        }
-        if (m_player2) {
-          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
-            myBgl->m_fields->p2 = PlayerState();
-          }
-          if (m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
-            m_player2->m_waveTrail->m_pointArray->removeAllObjects();
-          }
-        }
-
-        if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
-          if (myBgl->m_fields->m_fakePlayer1 && myBgl->m_fields->m_fakePlayer1->m_waveTrail) {
-            if (myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
-              myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
-            }
-          }
-          if (myBgl->m_fields->m_fakePlayer2 && myBgl->m_fields->m_fakePlayer2->m_waveTrail) {
-            if (myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
-              myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
-            }
-          }
-        }
-      }
-      g_extrapData.cleanup();
-    } catch(...) {
-      log::error("Error during PlayLayer::resetLevel cleanup!");
-    }
-  }
-};
-
-class $modify(CBFEditorLayer, LevelEditorLayer) {
-  void resetLevel() {
-    LevelEditorLayer::resetLevel();
-    try {
-      g_extrapData.cleanup();
-    } catch(...) {
-      log::error("Error during LevelEditorLayer::resetLevel cleanup!");
-    }
-  }
-};
-
-// ==========================================
 // BASE GAME LAYER HOOKS
 // ==========================================
 
@@ -1283,6 +1225,64 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     m_fields->p1.steps = 0;
     m_fields->p2.steps = 0;
+  }
+};
+
+// ==========================================
+// iOS INLINE FIX & SAFE CLEANUP
+// ==========================================
+
+class $modify(MyPlayLayer, PlayLayer) {
+  void resetLevel() {
+    PlayLayer::resetLevel();
+
+    try {
+      if (!g_softToggle) {
+        if (m_player1) {
+          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+            myBgl->m_fields->p1 = PlayerState();
+          }
+          if (m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
+            m_player1->m_waveTrail->m_pointArray->removeAllObjects();
+          }
+        }
+        if (m_player2) {
+          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+            myBgl->m_fields->p2 = PlayerState();
+          }
+          if (m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
+            m_player2->m_waveTrail->m_pointArray->removeAllObjects();
+          }
+        }
+
+        if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+          if (myBgl->m_fields->m_fakePlayer1 && myBgl->m_fields->m_fakePlayer1->m_waveTrail) {
+            if (myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
+              myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
+            }
+          }
+          if (myBgl->m_fields->m_fakePlayer2 && myBgl->m_fields->m_fakePlayer2->m_waveTrail) {
+            if (myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
+              myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
+            }
+          }
+        }
+      }
+      g_extrapData.cleanup();
+    } catch(...) {
+      log::error("Error during PlayLayer::resetLevel cleanup!");
+    }
+  }
+};
+
+class $modify(CBFEditorLayer, LevelEditorLayer) {
+  void resetLevel() {
+    LevelEditorLayer::resetLevel();
+    try {
+      g_extrapData.cleanup();
+    } catch(...) {
+      log::error("Error during LevelEditorLayer::resetLevel cleanup!");
+    }
   }
 };
 
