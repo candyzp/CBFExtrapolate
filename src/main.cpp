@@ -25,12 +25,15 @@
 using namespace geode::prelude;
 
 // ==========================================
-// OPTIMIZATIONS: Sorted vectors & Pre-allocation
+// OPTIMIZATIONS: Capped Vectors to Prevent Leaks
 // ==========================================
 std::vector<CCNode*> g_activeNodes;
 
 void addNodeOptimized(CCNode* node) {
   if (!node) return;
+  if (g_activeNodes.size() > 2048) {
+    g_activeNodes.erase(g_activeNodes.begin(), g_activeNodes.begin() + 512);
+  }
   auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
   if (it == g_activeNodes.end() || *it != node) {
     g_activeNodes.insert(it, node);
@@ -228,7 +231,9 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_dashRing = real->m_dashRing;
 
   if (fake->m_waveTrail && fake->m_waveTrail->m_pointArray) {
-    fake->m_waveTrail->m_pointArray->removeAllObjects();
+    if (fake->m_waveTrail->m_pointArray->count() > 150) {
+      fake->m_waveTrail->m_pointArray->removeAllObjects();
+    }
   }
   if (fake->m_regularTrail) {
     fake->m_regularTrail->stopStroke();
@@ -445,7 +450,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         int count = pointArray->count();
         if (count > state.waveTrailCount) {
           int diff = count - state.waveTrailCount;
-          if (diff > 10) {
+          if (diff > 10 || count > 300) {
             pointArray->removeAllObjects();
           } else {
             while (pointArray->count() > state.waveTrailCount) {
