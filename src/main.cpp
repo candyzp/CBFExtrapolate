@@ -12,6 +12,7 @@
 #include <Geode/binding/RingObject.hpp>
 #include <Geode/modify/EnhancedGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/LevelEditorLayer.hpp>
 #include <Geode/modify/HardStreak.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
@@ -19,8 +20,51 @@
 
 #include <algorithm>
 #include <vector>
+#include <stdexcept>
 
 using namespace geode::prelude;
+
+// ==========================================
+// OPTIMIZATIONS: Sorted vectors & Pre-allocation
+// ==========================================
+std::vector<CCNode*> g_activeNodes;
+
+void addNodeOptimized(CCNode* node) {
+  if (!node) return;
+  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
+  if (it == g_activeNodes.end() || *it != node) {
+    g_activeNodes.insert(it, node);
+  }
+}
+
+bool hasNodeOptimized(CCNode* node) {
+  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
+  return it != g_activeNodes.end() && *it == node;
+}
+
+void removeNodeOptimized(CCNode* node) {
+  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
+  if (it != g_activeNodes.end() && *it == node) {
+    g_activeNodes.erase(it);
+  }
+}
+
+struct ExtrapolationData {
+  std::vector<CCPoint> trailPoints;
+  ExtrapolationData() {
+    trailPoints.reserve(1024);
+  }
+  void cleanup() {
+    trailPoints.clear();
+    g_activeNodes.clear();
+  }
+};
+
+ExtrapolationData g_extrapData;
+
+// ==========================================
+// GLOBALS & SETUP
+// ==========================================
 
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
@@ -225,43 +269,67 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
   player = nullptr;
 }
 
+// ==========================================
+// iOS INLINE FIX & SAFE CLEANUP
+// ==========================================
+
 class $modify(MyPlayLayer, PlayLayer) {
   void resetLevel() {
     PlayLayer::resetLevel();
 
-    if (!g_softToggle) {
-      if (m_player1) {
-        if (auto *myBgl = static_cast<MyBGL *>(this)) {
-          myBgl->m_fields->p1 = PlayerState();
+    try {
+      if (!g_softToggle) {
+        if (m_player1) {
+          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+            myBgl->m_fields->p1 = PlayerState();
+          }
+          if (m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
+            m_player1->m_waveTrail->m_pointArray->removeAllObjects();
+          }
         }
-        if (m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
-          m_player1->m_waveTrail->m_pointArray->removeAllObjects();
+        if (m_player2) {
+          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+            myBgl->m_fields->p2 = PlayerState();
+          }
+          if (m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
+            m_player2->m_waveTrail->m_pointArray->removeAllObjects();
+          }
         }
-      }
-      if (m_player2) {
-        if (auto *myBgl = static_cast<MyBGL *>(this)) {
-          myBgl->m_fields->p2 = PlayerState();
-        }
-        if (m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
-          m_player2->m_waveTrail->m_pointArray->removeAllObjects();
-        }
-      }
 
-      if (auto *myBgl = static_cast<MyBGL *>(this)) {
-        if (myBgl->m_fields->m_fakePlayer1 && myBgl->m_fields->m_fakePlayer1->m_waveTrail) {
-          if (myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
-            myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
+        if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+          if (myBgl->m_fields->m_fakePlayer1 && myBgl->m_fields->m_fakePlayer1->m_waveTrail) {
+            if (myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
+              myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
+            }
           }
-        }
-        if (myBgl->m_fields->m_fakePlayer2 && myBgl->m_fields->m_fakePlayer2->m_waveTrail) {
-          if (myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
-            myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
+          if (myBgl->m_fields->m_fakePlayer2 && myBgl->m_fields->m_fakePlayer2->m_waveTrail) {
+            if (myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
+              myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
+            }
           }
         }
       }
+      g_extrapData.cleanup();
+    } catch(...) {
+      log::error("Error during PlayLayer::resetLevel cleanup!");
     }
   }
 };
+
+class $modify(CBFEditorLayer, LevelEditorLayer) {
+  void resetLevel() {
+    LevelEditorLayer::resetLevel();
+    try {
+      g_extrapData.cleanup();
+    } catch(...) {
+      log::error("Error during LevelEditorLayer::resetLevel cleanup!");
+    }
+  }
+};
+
+// ==========================================
+// BASE GAME LAYER HOOKS
+// ==========================================
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
@@ -974,122 +1042,127 @@ class $modify(MyBGL, GJBaseGameLayer) {
           g_extrapolating = false;
         };
 
-    if (hasP1 && m_fields->m_fakePlayer1) {
-      auto &state = m_fields->p1;
-      if (state.lastTime != 0 && !dead) {
-        double tCurrent = getCurrentTimestamp();
-        double timeScale = m_gameState.m_timeWarp;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-            state.lastDt > 0.0001f) {
-          double diff = state.lastTime - state.prevTime;
-          if (diff > 0.001) {
-            timeScale = (state.lastDt / 60.0f) / diff;
-          }
-        }
-        double dtSeconds = tCurrent - state.lastTime;
-        if (dtSeconds < 0.0) {
-          dtSeconds = 0.0;
-        }
-        double maxDtSeconds = 0.0;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = state.lastTime - state.prevTime;
-        } else {
-          maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? (state.lastDt / 60.0f / timeScale)
-                             : 0.033;
-        }
-        if (dtSeconds > maxDtSeconds) {
-          dtSeconds = maxDtSeconds;
-        }
-        double tCurrentClamped = state.lastTime + dtSeconds;
-
-        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-          std::vector<PlayerButtonCommand> pendingClicks;
-          if (hasCBF) {
-            bool isTwoPlayer =
-                m_levelSettings && m_levelSettings->m_twoPlayerMode;
-            for (const auto &cmd : m_queuedButtons) {
-              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-              if (isTarget && cmd.m_timestamp > state.lastTime &&
-                  cmd.m_timestamp <= tCurrentClamped) {
-                pendingClicks.push_back(cmd);
-              }
+    // EXCEPTION SAFETY AROUND MAIN EXTRAPOLATION LOOP
+    try {
+      if (hasP1 && m_fields->m_fakePlayer1) {
+        auto &state = m_fields->p1;
+        if (state.lastTime != 0 && !dead) {
+          double tCurrent = getCurrentTimestamp();
+          double timeScale = m_gameState.m_timeWarp;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+              state.lastDt > 0.0001f) {
+            double diff = state.lastTime - state.prevTime;
+            if (diff > 0.001) {
+              timeScale = (state.lastDt / 60.0f) / diff;
             }
           }
-
-          syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
-
-          origP1State = saveRenderPlayerState(m_player1);
-          savedP1State = true;
-
-          simulatedP1 = true;
-
-          extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
-                            tCurrentClamped, timeScale);
-
-          applyRenderPlayerStateFromFake(m_player1,
-                                       m_fields->m_fakePlayer1);
-        }
-      }
-    }
-
-    if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
-      auto &state = m_fields->p2;
-      if (state.lastTime != 0 && !dead) {
-        double tCurrent = getCurrentTimestamp();
-        double timeScale = m_gameState.m_timeWarp;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-            state.lastDt > 0.0001f) {
-          double diff = state.lastTime - state.prevTime;
-          if (diff > 0.001) {
-            timeScale = (state.lastDt / 60.0f) / diff;
+          double dtSeconds = tCurrent - state.lastTime;
+          if (dtSeconds < 0.0) {
+            dtSeconds = 0.0;
           }
-        }
-        double dtSeconds = tCurrent - state.lastTime;
-        if (dtSeconds < 0.0) {
-          dtSeconds = 0.0;
-        }
-        double maxDtSeconds = 0.0;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = state.lastTime - state.prevTime;
-        } else {
-          maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? (state.lastDt / 60.0f / timeScale)
-                             : 0.033;
-        }
-        if (dtSeconds > maxDtSeconds) {
-          dtSeconds = maxDtSeconds;
-        }
-        double tCurrentClamped = state.lastTime + dtSeconds;
+          double maxDtSeconds = 0.0;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+            maxDtSeconds = state.lastTime - state.prevTime;
+          } else {
+            maxDtSeconds = (state.lastDt > 0.0001f)
+                               ? (state.lastDt / 60.0f / timeScale)
+                               : 0.033;
+          }
+          if (dtSeconds > maxDtSeconds) {
+            dtSeconds = maxDtSeconds;
+          }
+          double tCurrentClamped = state.lastTime + dtSeconds;
 
-        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-          std::vector<PlayerButtonCommand> pendingClicks;
-          if (hasCBF) {
-            bool isTwoPlayer =
-                m_levelSettings && m_levelSettings->m_twoPlayerMode;
-            for (const auto &cmd : m_queuedButtons) {
-              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-              if (isTarget && cmd.m_timestamp > state.lastTime &&
-                  cmd.m_timestamp <= tCurrentClamped) {
-                pendingClicks.push_back(cmd);
+          if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+            std::vector<PlayerButtonCommand> pendingClicks;
+            if (hasCBF) {
+              bool isTwoPlayer =
+                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
+              for (const auto &cmd : m_queuedButtons) {
+                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget && cmd.m_timestamp > state.lastTime &&
+                    cmd.m_timestamp <= tCurrentClamped) {
+                  pendingClicks.push_back(cmd);
+                }
               }
             }
+
+            syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
+
+            origP1State = saveRenderPlayerState(m_player1);
+            savedP1State = true;
+
+            simulatedP1 = true;
+
+            extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
+                              tCurrentClamped, timeScale);
+
+            applyRenderPlayerStateFromFake(m_player1,
+                                         m_fields->m_fakePlayer1);
           }
-
-          syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
-
-          origP2State = saveRenderPlayerState(m_player2);
-          savedP2State = true;
-
-          simulatedP2 = true;
-
-          extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
-                            tCurrentClamped, timeScale);
-
-          applyRenderPlayerStateFromFake(m_player2,
-                                       m_fields->m_fakePlayer2);
         }
       }
+
+      if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
+        auto &state = m_fields->p2;
+        if (state.lastTime != 0 && !dead) {
+          double tCurrent = getCurrentTimestamp();
+          double timeScale = m_gameState.m_timeWarp;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+              state.lastDt > 0.0001f) {
+            double diff = state.lastTime - state.prevTime;
+            if (diff > 0.001) {
+              timeScale = (state.lastDt / 60.0f) / diff;
+            }
+          }
+          double dtSeconds = tCurrent - state.lastTime;
+          if (dtSeconds < 0.0) {
+            dtSeconds = 0.0;
+          }
+          double maxDtSeconds = 0.0;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+            maxDtSeconds = state.lastTime - state.prevTime;
+          } else {
+            maxDtSeconds = (state.lastDt > 0.0001f)
+                               ? (state.lastDt / 60.0f / timeScale)
+                               : 0.033;
+          }
+          if (dtSeconds > maxDtSeconds) {
+            dtSeconds = maxDtSeconds;
+          }
+          double tCurrentClamped = state.lastTime + dtSeconds;
+
+          if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+            std::vector<PlayerButtonCommand> pendingClicks;
+            if (hasCBF) {
+              bool isTwoPlayer =
+                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
+              for (const auto &cmd : m_queuedButtons) {
+                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget && cmd.m_timestamp > state.lastTime &&
+                    cmd.m_timestamp <= tCurrentClamped) {
+                  pendingClicks.push_back(cmd);
+                }
+              }
+            }
+
+            syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
+
+            origP2State = saveRenderPlayerState(m_player2);
+            savedP2State = true;
+
+            simulatedP2 = true;
+
+            extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
+                              tCurrentClamped, timeScale);
+
+            applyRenderPlayerStateFromFake(m_player2,
+                                         m_fields->m_fakePlayer2);
+          }
+        }
+      }
+    } catch (...) {
+      log::error("Crash prevented in visit extrapolation loop.");
     }
 
     bool cameraExtrapolated = false;
