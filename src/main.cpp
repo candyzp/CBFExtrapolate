@@ -12,7 +12,6 @@
 #include <Geode/modify/EnhancedGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/GJGroundLayer.hpp>
-#include <Geode/modify/HardStreak.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
@@ -580,18 +579,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     CCPoint origP1 = {0, 0};
     CCPoint origP1Rob = {0, 0};
-    int origTrailCount1 = 0;
-    CCPoint origCurrentPoint1 = {0, 0};
-    int origTrailZ1 = 0;
-    bool hasTrail1 = false;
     bool simulatedP1 = false;
 
     CCPoint origP2 = {0, 0};
     CCPoint origP2Rob = {0, 0};
-    int origTrailCount2 = 0;
-    CCPoint origCurrentPoint2 = {0, 0};
-    int origTrailZ2 = 0;
-    bool hasTrail2 = false;
     bool simulatedP2 = false;
 
     CCPoint origObj = {0, 0};
@@ -840,15 +831,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           origP1 = m_player1->getPosition();
           origP1Rob = m_player1->m_position;
 
-          hasTrail1 = m_player1->m_waveTrail != nullptr;
-          if (hasTrail1) {
-            origCurrentPoint1 = m_player1->m_waveTrail->m_currentPoint;
-            origTrailZ1 = m_player1->m_waveTrail->getZOrder();
-            if (m_player1->m_waveTrail->m_pointArray) {
-              origTrailCount1 = m_player1->m_waveTrail->m_pointArray->count();
-            }
-          }
-
           simulatedP1 = true;
 
           extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
@@ -862,12 +844,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
           m_player1->CCNode::setPosition(fakePos);
           m_player1->m_position = fakeRobPos;
-          if (hasTrail1) {
-            auto trail = m_player1->m_waveTrail;
-            trail->m_currentPoint = fakePos;
-            trail->setZOrder(std::max(origTrailZ1, m_player1->getZOrder() + 1));
-            trail->updateStroke(0.f);
-          }
         }
       }
     }
@@ -916,15 +892,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           origP2 = m_player2->getPosition();
           origP2Rob = m_player2->m_position;
 
-          hasTrail2 = m_player2->m_waveTrail != nullptr;
-          if (hasTrail2) {
-            origCurrentPoint2 = m_player2->m_waveTrail->m_currentPoint;
-            origTrailZ2 = m_player2->m_waveTrail->getZOrder();
-            if (m_player2->m_waveTrail->m_pointArray) {
-              origTrailCount2 = m_player2->m_waveTrail->m_pointArray->count();
-            }
-          }
-
           simulatedP2 = true;
 
           extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
@@ -938,12 +905,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
           m_player2->CCNode::setPosition(fakePos);
           m_player2->m_position = fakeRobPos;
-          if (hasTrail2) {
-            auto trail = m_player2->m_waveTrail;
-            trail->m_currentPoint = fakePos;
-            trail->setZOrder(std::max(origTrailZ2, m_player2->getZOrder() + 1));
-            trail->updateStroke(0.f);
-          }
         }
       }
     }
@@ -1045,33 +1006,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_player1->CCNode::setPosition(origP1);
       m_player1->m_position = origP1Rob;
 
-      if (hasTrail1) {
-        m_player1->m_waveTrail->setZOrder(origTrailZ1);
-        m_player1->m_waveTrail->m_currentPoint = origCurrentPoint1;
-        auto *pointArray = m_player1->m_waveTrail->m_pointArray;
-        if (pointArray) {
-          while (pointArray->count() > origTrailCount1) {
-            pointArray->removeLastObject();
-          }
-        }
-        m_player1->m_waveTrail->updateStroke(0.f);
-      }
     }
     if (hasP2 && simulatedP2) {
       m_player2->CCNode::setPosition(origP2);
       m_player2->m_position = origP2Rob;
 
-      if (hasTrail2) {
-        m_player2->m_waveTrail->setZOrder(origTrailZ2);
-        m_player2->m_waveTrail->m_currentPoint = origCurrentPoint2;
-        auto *pointArray = m_player2->m_waveTrail->m_pointArray;
-        if (pointArray) {
-          while (pointArray->count() > origTrailCount2) {
-            pointArray->removeLastObject();
-          }
-        }
-        m_player2->m_waveTrail->updateStroke(0.f);
-      }
     }
 
     m_playerDied = origPlayerDied;
