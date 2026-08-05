@@ -12,47 +12,66 @@
 #include <Geode/binding/RingObject.hpp>
 #include <Geode/modify/EnhancedGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
-#include <Geode/modify/GJGroundLayer.hpp>
 #include <Geode/modify/LevelEditorLayer.hpp>
+#include <Geode/modify/HardStreak.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <vector>
+#include <stdexcept>
 
 using namespace geode::prelude;
+
+// ==========================================
+// OPTIMIZATIONS: Capped Vectors to Prevent Leaks
+// ==========================================
+std::vector<CCNode*> g_activeNodes;
+
+void addNodeOptimized(CCNode* node) {
+  if (!node) return;
+  if (g_activeNodes.size() > 2048) {
+    g_activeNodes.erase(g_activeNodes.begin(), g_activeNodes.begin() + 512);
+  }
+  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
+  if (it == g_activeNodes.end() || *it != node) {
+    g_activeNodes.insert(it, node);
+  }
+}
+
+bool hasNodeOptimized(CCNode* node) {
+  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
+  return it != g_activeNodes.end() && *it == node;
+}
+
+void removeNodeOptimized(CCNode* node) {
+  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
+  if (it != g_activeNodes.end() && *it == node) {
+    g_activeNodes.erase(it);
+  }
+}
+
+struct ExtrapolationData {
+  std::vector<CCPoint> trailPoints;
+  ExtrapolationData() {
+    trailPoints.reserve(1024);
+  }
+  void cleanup() {
+    trailPoints.clear();
+    g_activeNodes.clear();
+  }
+};
+
+ExtrapolationData g_extrapData;
+
+// ==========================================
+// GLOBALS & SETUP
+// ==========================================
 
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
 static bool g_cbfSoftToggle = false;
-
-struct ExtrapolationData {
-  std::vector<CCPoint> trailPoints;
-  std::vector<PlayerButtonCommand> pendingClicks;
-  std::vector<PlayerButtonCommand> sortedClicks;
-  std::vector<cocos2d::CCNode*> aliveNodes;
-  std::vector<cocos2d::CCNode*> aliveNodesMiddleground;
-
-  ExtrapolationData() {
-    trailPoints.reserve(1024);
-    pendingClicks.reserve(64);
-    sortedClicks.reserve(64);
-    aliveNodes.reserve(512);
-    aliveNodesMiddleground.reserve(256);
-  }
-
-  void cleanup() {
-    trailPoints.clear();
-    pendingClicks.clear();
-    sortedClicks.clear();
-    aliveNodes.clear();
-    aliveNodesMiddleground.clear();
-  }
-};
-
-static ExtrapolationData g_extrapData;
 
 $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
@@ -66,11 +85,12 @@ $on_mod(Loaded) {
   }
 }
 
-static void extrapolatePushButton(PlayerObject* player, PlayerButton button) {
+static void extrapolatePushButton(PlayerObject *player, PlayerButton button) {
   player->pushButton(button);
 }
 
-static void extrapolateReleaseButton(PlayerObject* player, PlayerButton button) {
+static void extrapolateReleaseButton(PlayerObject *player,
+                                     PlayerButton button) {
   player->releaseButton(button);
 }
 
@@ -78,21 +98,20 @@ struct PlayerState {
   CCPoint lastPos = {0, 0};
   CCPoint lastVel = {0, 0};
   CCPoint prevVel = {0, 0};
-  float lastRot = 0.f;
-  double lastTime = 0.0;
-  double prevTime = 0.0;
-  float lastDt = 0.f;
+  float lastRot = 0;
+  double lastTime = 0;
+  double prevTime = 0;
+  float lastDt = 0;
   int lastSteps = 0;
   int steps = 0;
-  double prog = 0.0;
-  double tickTime = 0.0;
+  double prog = 0;
+  double tickTime = 0;
   bool isDead = false;
 };
 
-static void syncFakePlayer(PlayerObject* fake, PlayerObject* real) {
+static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   if (!fake || !real)
     return;
-
   fake->copyAttributes(real);
 
   fake->setPosition(real->getPosition());
@@ -224,22 +243,26 @@ static void syncFakePlayer(PlayerObject* fake, PlayerObject* real) {
   }
 }
 
-static bool isFakePlayer(PlayerObject* player);
+static bool isFakePlayer(PlayerObject *player);
 
-static void cleanUpFakePlayer(PlayerObject*& player) {
+static void cleanUpFakePlayer(PlayerObject *&player) {
   if (!player)
     return;
 
-  auto& trajectory = Bot::get()->trajectory();
+  auto &trajectory = Bot::get()->trajectory();
 
-  if (trajectory.m_fakePlayer1 == player)
+  if (trajectory.m_fakePlayer1 == player) {
     trajectory.m_fakePlayer1 = nullptr;
-  if (trajectory.unsafeInner()->m_fakePlayer1 == player)
+  }
+  if (trajectory.unsafeInner()->m_fakePlayer1 == player) {
     trajectory.unsafeInner()->m_fakePlayer1 = nullptr;
-  if (trajectory.m_fakePlayer2 == player)
+  }
+  if (trajectory.m_fakePlayer2 == player) {
     trajectory.m_fakePlayer2 = nullptr;
-  if (trajectory.unsafeInner()->m_fakePlayer2 == player)
+  }
+  if (trajectory.unsafeInner()->m_fakePlayer2 == player) {
     trajectory.unsafeInner()->m_fakePlayer2 = nullptr;
+  }
 
   player->stopAllActions();
   player->unscheduleAllSelectors();
@@ -250,6 +273,10 @@ static void cleanUpFakePlayer(PlayerObject*& player) {
 
   player = nullptr;
 }
+
+// ==========================================
+// BASE GAME LAYER HOOKS
+// ==========================================
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
@@ -272,78 +299,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float cameraZoom;
     float cameraAngle;
   };
-
-  struct GroundState {
-    float x = 0.f;
-    float y = 0.f;
-    float scaleX = 1.f;
-    float scaleY = 1.f;
-    float rotation = 0.f;
-    float offset = 0.f;
-    float unk = 0.f;
-    bool showGround = true;
-    bool showGround1 = true;
-    bool showGround2 = true;
-    bool cameraRotated = false;
-  };
-
-  struct RenderPlayerState {
-    CCPoint nodePos = {0, 0};
-    CCPoint robPos = {0, 0};
-    float positionX = 0.f;
-    float positionY = 0.f;
-    float unmodifiedPositionX = 0.f;
-    float unmodifiedPositionY = 0.f;
-    CCPoint lastPosition = {0, 0};
-    CCPoint lastPortalPos = {0, 0};
-    float rotation = 0.f;
-    float scaleX = 1.f;
-    float scaleY = 1.f;
-    bool flipX = false;
-    bool flipY = false;
-    bool hasWaveTrail = false;
-    int waveTrailCount = 0;
-    CCPoint waveTrailCurrentPoint = {0, 0};
-  };
-
-  struct SavedNodeState {
-    cocos2d::CCNode* node = nullptr;
-    cocos2d::CCPoint position = {0, 0};
-    float rotation = 0.f;
-    float scaleX = 1.f;
-    float scaleY = 1.f;
-    bool visible = true;
-    bool hasRGBA = false;
-    GLubyte opacity = 255;
-    cocos2d::ccColor3B color = {255, 255, 255};
-  };
-
-  struct Fields {
-    PlayerState p1;
-    PlayerState p2;
-    PlayerObject* m_fakePlayer1 = nullptr;
-    PlayerObject* m_fakePlayer2 = nullptr;
-    bool m_enableSolidCollisions = true;
-    double m_teleportYOffset = 0.0;
-
-    std::vector<SavedNodeState> m_savedGroundChildren1;
-    std::vector<SavedNodeState> m_savedGroundChildren2;
-    std::vector<SavedNodeState> m_savedMiddleground;
-
-    ~Fields() {
-      cleanUpFakePlayer(m_fakePlayer1);
-      cleanUpFakePlayer(m_fakePlayer2);
-    }
-  };
-
-  static void onModify(auto& self) {
-    (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
-    (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
-    (void)self.setHookPriority("GJBaseGameLayer::flipGravity", Priority::VeryEarly);
-    (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects", Priority::VeryEarly);
-    (void)self.setHookPriority("GJBaseGameLayer::teleportPlayer", Priority::VeryEarly);
-    (void)self.setHookPriority("GJBaseGameLayer::toggleFlipped", Priority::VeryEarly);
-  }
 
   CameraState saveCameraState() {
     CameraState state;
@@ -368,7 +323,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     return state;
   }
 
-  void restoreCameraState(const CameraState& state) {
+  void restoreCameraState(const CameraState &state) {
     m_cameraFlip = state.cameraFlip;
     m_cameraWidthOffset = state.cameraWidthOffset;
     m_cameraHeightOffset = state.cameraHeightOffset;
@@ -389,7 +344,36 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_gameState.m_cameraAngle = state.cameraAngle;
   }
 
-  RenderPlayerState saveRenderPlayerState(PlayerObject* player) {
+  struct GroundState {
+    float x;
+    float y;
+    float scaleX;
+    float scaleY;
+    float rotation;
+    float offset;
+    float unk;
+  };
+
+  struct RenderPlayerState {
+    CCPoint nodePos = {0, 0};
+    CCPoint robPos = {0, 0};
+    float positionX = 0.f;
+    float positionY = 0.f;
+    float unmodifiedPositionX = 0.f;
+    float unmodifiedPositionY = 0.f;
+    CCPoint lastPosition = {0, 0};
+    CCPoint lastPortalPos = {0, 0};
+    float rotation = 0.f;
+    float scaleX = 1.f;
+    float scaleY = 1.f;
+    bool flipX = false;
+    bool flipY = false;
+    bool hasWaveTrail = false;
+    int waveTrailCount = 0;
+    CCPoint waveTrailCurrentPoint = {0, 0};
+  };
+
+  RenderPlayerState saveRenderPlayerState(PlayerObject *player) {
     RenderPlayerState state;
     if (!player)
       return state;
@@ -419,7 +403,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     return state;
   }
 
-  void applyRenderPlayerStateFromFake(PlayerObject* real, PlayerObject* fake) {
+  void applyRenderPlayerStateFromFake(PlayerObject *real, PlayerObject *fake) {
     if (!real || !fake)
       return;
 
@@ -439,7 +423,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     real->m_lastPortalPos = fake->m_lastPortalPos;
   }
 
-  void restoreRenderPlayerState(PlayerObject* player, RenderPlayerState const& state) {
+  void restoreRenderPlayerState(PlayerObject *player,
+                                RenderPlayerState const &state) {
     if (!player)
       return;
 
@@ -460,7 +445,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (state.hasWaveTrail && player->m_waveTrail) {
       player->m_waveTrail->m_currentPoint = state.waveTrailCurrentPoint;
-      auto* pointArray = player->m_waveTrail->m_pointArray;
+      auto *pointArray = player->m_waveTrail->m_pointArray;
       if (pointArray) {
         int count = pointArray->count();
         if (count > state.waveTrailCount) {
@@ -478,8 +463,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  GroundState saveGroundState(GJGroundLayer* ground) {
-    GroundState state;
+  GroundState saveGroundState(GJGroundLayer *ground) {
+    GroundState state = {0};
     if (ground) {
       state.x = ground->getPositionX();
       state.y = ground->getPositionY();
@@ -488,63 +473,67 @@ class $modify(MyBGL, GJBaseGameLayer) {
       state.rotation = ground->getRotation();
       state.offset = ground->m_ground1Offset;
       state.unk = ground->m_unk1cc;
-      state.showGround = ground->m_showGround;
-      state.showGround1 = ground->m_showGround1;
-      state.showGround2 = ground->m_showGround2;
-      state.cameraRotated = ground->m_cameraRotated;
     }
     return state;
   }
 
-  void restoreGroundState(GJGroundLayer* ground, GroundState const& state) {
-    if (!ground)
-      return;
-
-    ground->setPositionX(state.x);
-    ground->setPositionY(state.y);
-    ground->setScaleX(state.scaleX);
-    ground->setScaleY(state.scaleY);
-    ground->setRotation(state.rotation);
-    ground->m_ground1Offset = state.offset;
-    ground->m_unk1cc = state.unk;
-    ground->m_showGround = state.showGround;
-    ground->m_showGround1 = state.showGround1;
-    ground->m_showGround2 = state.showGround2;
-    ground->m_cameraRotated = state.cameraRotated;
+  void restoreGroundState(GJGroundLayer *ground, const GroundState &state) {
+    if (ground) {
+      ground->setPositionX(state.x);
+      ground->setPositionY(state.y);
+      ground->setScaleX(state.scaleX);
+      ground->setScaleY(state.scaleY);
+      ground->setRotation(state.rotation);
+      ground->m_ground1Offset = state.offset;
+      ground->m_unk1cc = state.unk;
+    }
   }
 
-  void saveRGBAState(cocos2d::CCNode* node, SavedNodeState& state) {
-    if (auto* sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite*>(node)) {
+  struct SavedNodeState {
+    cocos2d::CCNode *node = nullptr;
+    cocos2d::CCPoint position = {0, 0};
+    float rotation = 0.f;
+    float scaleX = 1.f;
+    float scaleY = 1.f;
+    bool visible = true;
+    bool hasRGBA = false;
+    GLubyte opacity = 255;
+    cocos2d::ccColor3B color = {255, 255, 255};
+  };
+
+  void saveRGBAState(cocos2d::CCNode *node, SavedNodeState &state) {
+    if (auto *sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite *>(node)) {
       state.hasRGBA = true;
       state.opacity = sprite->getOpacity();
       state.color = sprite->getColor();
       return;
     }
 
-    if (auto* layer = geode::cast::typeinfo_cast<cocos2d::CCLayerRGBA*>(node)) {
+    if (auto *layer = geode::cast::typeinfo_cast<cocos2d::CCLayerRGBA *>(node)) {
       state.hasRGBA = true;
       state.opacity = layer->getOpacity();
       state.color = layer->getColor();
     }
   }
 
-  void restoreRGBAState(cocos2d::CCNode* node, SavedNodeState const& state) {
+  void restoreRGBAState(cocos2d::CCNode *node, const SavedNodeState &state) {
     if (!state.hasRGBA)
       return;
 
-    if (auto* sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite*>(node)) {
+    if (auto *sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite *>(node)) {
       sprite->setOpacity(state.opacity);
       sprite->setColor(state.color);
       return;
     }
 
-    if (auto* layer = geode::cast::typeinfo_cast<cocos2d::CCLayerRGBA*>(node)) {
+    if (auto *layer = geode::cast::typeinfo_cast<cocos2d::CCLayerRGBA *>(node)) {
       layer->setOpacity(state.opacity);
       layer->setColor(state.color);
     }
   }
 
-  void saveNodePositionsRecursive(cocos2d::CCNode* node, std::vector<SavedNodeState>& saved) {
+  void saveNodePositionsRecursive(cocos2d::CCNode *node,
+                                  std::vector<SavedNodeState> &saved) {
     if (!node)
       return;
 
@@ -560,37 +549,41 @@ class $modify(MyBGL, GJBaseGameLayer) {
     saved.push_back(state);
 
     if (node->getChildren()) {
-      for (auto* child : geode::cocos::CCArrayExt<cocos2d::CCNode*>(node->getChildren())) {
+      for (auto *child :
+           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
         saveNodePositionsRecursive(child, saved);
       }
     }
   }
 
-  void collectAliveNodesRecursive(cocos2d::CCNode* node, std::vector<cocos2d::CCNode*>& alive) {
+  void collectAliveNodesRecursive(
+      cocos2d::CCNode *node, std::vector<cocos2d::CCNode *> &alive) {
     if (!node)
       return;
 
     alive.push_back(node);
 
     if (node->getChildren()) {
-      for (auto* child : geode::cocos::CCArrayExt<cocos2d::CCNode*>(node->getChildren())) {
+      for (auto *child :
+           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
         collectAliveNodesRecursive(child, alive);
       }
     }
   }
 
-  void restoreNodePositions(const std::vector<SavedNodeState>& saved, cocos2d::CCNode* root,
-                            std::vector<cocos2d::CCNode*>& aliveBuffer) {
+  void restoreNodePositions(const std::vector<SavedNodeState> &saved,
+                            cocos2d::CCNode *root) {
     if (!root)
       return;
 
-    aliveBuffer.clear();
-    aliveBuffer.reserve(std::max(aliveBuffer.capacity(), saved.size()));
-    collectAliveNodesRecursive(root, aliveBuffer);
-    std::sort(aliveBuffer.begin(), aliveBuffer.end());
+    std::vector<cocos2d::CCNode *> alive;
+    alive.reserve(saved.size());
+    collectAliveNodesRecursive(root, alive);
 
-    for (const auto& state : saved) {
-      if (!std::binary_search(aliveBuffer.begin(), aliveBuffer.end(), state.node))
+    std::sort(alive.begin(), alive.end());
+
+    for (const auto &state : saved) {
+      if (!std::binary_search(alive.begin(), alive.end(), state.node))
         continue;
 
       state.node->setPosition(state.position);
@@ -602,49 +595,34 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  static double computeSafeTimeScale(PlayerState const& state, float gameTimeWarp) {
-    double timeScale = gameTimeWarp;
-    if (state.prevTime > 0.0001 && state.lastTime > state.prevTime && state.lastDt > 0.0001f) {
-      double diff = state.lastTime - state.prevTime;
-      if (diff > 0.001) {
-        timeScale = (state.lastDt / 60.0f) / diff;
-      }
+  struct Fields {
+    PlayerState p1;
+    PlayerState p2;
+    PlayerObject *m_fakePlayer1 = nullptr;
+    PlayerObject *m_fakePlayer2 = nullptr;
+    bool m_enableSolidCollisions = true;
+    double m_teleportYOffset = 0.0;
+
+    ~Fields() {
+      cleanUpFakePlayer(m_fakePlayer1);
+      cleanUpFakePlayer(m_fakePlayer2);
     }
-    if (!std::isfinite(timeScale) || timeScale <= 0.0) {
-      timeScale = 1.0;
-    }
-    return timeScale;
+  };
+
+  static void onModify(auto &self) {
+    (void)self.setHookPriority("GJBaseGameLayer::update", Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::visit", Priority::VeryLate);
+    (void)self.setHookPriority("GJBaseGameLayer::flipGravity",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::teleportPlayer",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("GJBaseGameLayer::toggleFlipped",
+                               Priority::VeryEarly);
   }
 
-  static double computeClampedDtSeconds(PlayerState const& state, double tCurrent, double timeScale) {
-    double dtSeconds = tCurrent - state.lastTime;
-    if (dtSeconds < 0.0) {
-      dtSeconds = 0.0;
-    }
-
-    double frameClamp = (0.25 / 60.0) / timeScale;
-    double historyClamp = 0.0;
-
-    if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-      historyClamp = state.lastTime - state.prevTime;
-    } else if (state.lastDt > 0.0001f) {
-      historyClamp = state.lastDt / 60.0f / timeScale;
-    } else {
-      historyClamp = 0.033;
-    }
-
-    double maxDtSeconds = std::min(frameClamp, historyClamp);
-    if (!std::isfinite(maxDtSeconds) || maxDtSeconds < 0.0) {
-      maxDtSeconds = frameClamp;
-    }
-
-    if (dtSeconds > maxDtSeconds) {
-      dtSeconds = maxDtSeconds;
-    }
-    return dtSeconds;
-  }
-
-  void flipGravity(PlayerObject* player, bool gravity, bool unk) {
+  void flipGravity(PlayerObject *player, bool gravity, bool unk) {
     if (g_softToggle) {
       GJBaseGameLayer::flipGravity(player, gravity, unk);
       return;
@@ -656,7 +634,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  void teleportPlayer(TeleportPortalObject* obj, PlayerObject* player) {
+  void teleportPlayer(TeleportPortalObject *obj, PlayerObject *player) {
     if (g_softToggle) {
       GJBaseGameLayer::teleportPlayer(obj, player);
       return;
@@ -671,8 +649,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  void collisionCheckObjects(PlayerObject* player, gd::vector<GameObject*>* objects,
-                             int length, float dt) {
+  void collisionCheckObjects(PlayerObject *player,
+                             gd::vector<GameObject *> *objects, int length,
+                             float dt) {
     if (g_softToggle) {
       GJBaseGameLayer::collisionCheckObjects(player, objects, length, dt);
       return;
@@ -697,7 +676,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void update(float dt) override {
-    auto playLayer = geode::cast::typeinfo_cast<PlayLayer*>(this);
+    auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
     bool isPlatformer = (m_player1 && m_player1->m_isPlatformer) ||
                         (m_player2 && m_player2->m_isPlatformer);
     if (g_softToggle || !playLayer || isPlatformer) {
@@ -711,7 +690,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     GJBaseGameLayer::update(dt);
 
     for (int i = 0; i < 2; ++i) {
-      auto& state = (i == 0) ? m_fields->p1 : m_fields->p2;
+      auto &state = (i == 0) ? m_fields->p1 : m_fields->p2;
       auto player = (i == 0) ? m_player1 : m_player2;
       if (player) {
         if (state.steps > 0) {
@@ -724,7 +703,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  PlayerObject* createFakePlayer(bool isPlayer2) {
+  PlayerObject *createFakePlayer(bool isPlayer2) {
     auto player = PlayerObject::create(1, 1, this, this, true);
     if (player) {
       player->setVisible(false);
@@ -752,7 +731,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void visit() override {
-    auto playLayer = geode::cast::typeinfo_cast<PlayLayer*>(this);
+    auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
     if (!playLayer) {
       GJBaseGameLayer::visit();
       return;
@@ -762,7 +741,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
                         (m_player2 && m_player2->m_isPlatformer);
 
     bool paused = playLayer->getChildByType<PauseLayer>(0) != nullptr ||
-                  CCDirector::sharedDirector()->getRunningScene()->getChildByType<PauseLayer>(0) != nullptr;
+                  CCDirector::sharedDirector()
+                          ->getRunningScene()
+                          ->getChildByType<PauseLayer>(0) != nullptr;
 
     bool flipping = playLayer->isFlipping();
 
@@ -786,20 +767,24 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (m_objectLayer) {
       if (hasP1) {
-        if (!m_fields->m_fakePlayer1 || m_fields->m_fakePlayer1->getParent() != this) {
+        if (!m_fields->m_fakePlayer1 ||
+            m_fields->m_fakePlayer1->getParent() != this) {
           cleanUpFakePlayer(m_fields->m_fakePlayer1);
           m_fields->m_fakePlayer1 = createFakePlayer(false);
         }
         Bot::get()->trajectory().m_fakePlayer1 = m_fields->m_fakePlayer1;
-        Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 = m_fields->m_fakePlayer1;
+        Bot::get()->trajectory().unsafeInner()->m_fakePlayer1 =
+            m_fields->m_fakePlayer1;
       }
       if (hasP2) {
-        if (!m_fields->m_fakePlayer2 || m_fields->m_fakePlayer2->getParent() != this) {
+        if (!m_fields->m_fakePlayer2 ||
+            m_fields->m_fakePlayer2->getParent() != this) {
           cleanUpFakePlayer(m_fields->m_fakePlayer2);
           m_fields->m_fakePlayer2 = createFakePlayer(true);
         }
         Bot::get()->trajectory().m_fakePlayer2 = m_fields->m_fakePlayer2;
-        Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = m_fields->m_fakePlayer2;
+        Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 =
+            m_fields->m_fakePlayer2;
       }
     }
     Bot::get()->trajectory().deactivateAllRemembered();
@@ -813,50 +798,69 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool simulatedP2 = false;
 
     CCPoint origObj = {0, 0};
+    CCPoint camOff = {0, 0};
     bool hasObj = m_objectLayer != nullptr;
 
     float origObjScaleX = m_objectLayer ? m_objectLayer->getScaleX() : 1.f;
     float origObjScaleY = m_objectLayer ? m_objectLayer->getScaleY() : 1.f;
-
+    float origP1ScaleX = m_player1 ? m_player1->getScaleX() : 1.f;
+    float origP1ScaleY = m_player1 ? m_player1->getScaleY() : 1.f;
+    float origP2ScaleX = m_player2 ? m_player2->getScaleX() : 1.f;
+    float origP2ScaleY = m_player2 ? m_player2->getScaleY() : 1.f;
+    float origGroundScaleX = m_groundLayer ? m_groundLayer->getScaleX() : 1.f;
+    float origGroundScaleY = m_groundLayer ? m_groundLayer->getScaleY() : 1.f;
+    float origGround2ScaleX =
+        m_groundLayer2 ? m_groundLayer2->getScaleX() : 1.f;
+    float origGround2ScaleY =
+        m_groundLayer2 ? m_groundLayer2->getScaleY() : 1.f;
+    float origGroundX = m_groundLayer ? m_groundLayer->getPositionX() : 0.f;
+    float origGroundY = m_groundLayer ? m_groundLayer->getPositionY() : 0.f;
+    float origGround2X = m_groundLayer2 ? m_groundLayer2->getPositionX() : 0.f;
+    float origGround2Y = m_groundLayer2 ? m_groundLayer2->getPositionY() : 0.f;
     GroundState groundState1 = saveGroundState(m_groundLayer);
     GroundState groundState2 = saveGroundState(m_groundLayer2);
 
-    auto& savedGroundChildren1 = m_fields->m_savedGroundChildren1;
-    auto& savedGroundChildren2 = m_fields->m_savedGroundChildren2;
-    auto& savedMiddleground = m_fields->m_savedMiddleground;
-
-    savedGroundChildren1.clear();
-    savedGroundChildren2.clear();
-    savedMiddleground.clear();
-
-    savedGroundChildren1.reserve(128);
-    savedGroundChildren2.reserve(128);
-    savedMiddleground.reserve(128);
+    std::vector<SavedNodeState> savedGroundChildren1;
+    std::vector<SavedNodeState> savedGroundChildren2;
+    savedGroundChildren1.reserve(64);
+    savedGroundChildren2.reserve(64);
 
     saveNodePositionsRecursive(m_groundLayer, savedGroundChildren1);
     saveNodePositionsRecursive(m_groundLayer2, savedGroundChildren2);
-    saveNodePositionsRecursive(m_middleground, savedMiddleground);
 
     float origObjRot = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
+    float origGroundRot = m_groundLayer ? m_groundLayer->getRotation() : 0.f;
+    float origGround2Rot = m_groundLayer2 ? m_groundLayer2->getRotation() : 0.f;
 
     if (hasObj) {
       origObj = m_objectLayer->getPosition();
     }
 
-    float origInShaderObjScaleX = m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
-    float origInShaderObjScaleY = m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleY() : 1.f;
-    float origInShaderObjRot = m_inShaderObjectLayer ? m_inShaderObjectLayer->getRotation() : 0.f;
-    CCPoint origInShaderObjPos = m_inShaderObjectLayer ? m_inShaderObjectLayer->getPosition() : CCPoint{0, 0};
+    float origInShaderObjScaleX =
+        m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
+    float origInShaderObjScaleY =
+        m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleY() : 1.f;
+    float origInShaderObjRot =
+        m_inShaderObjectLayer ? m_inShaderObjectLayer->getRotation() : 0.f;
+    CCPoint origInShaderObjPos = m_inShaderObjectLayer
+                                     ? m_inShaderObjectLayer->getPosition()
+                                     : CCPoint{0, 0};
 
-    float origAboveShaderObjScaleX = m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getScaleX() : 1.f;
-    float origAboveShaderObjScaleY = m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getScaleY() : 1.f;
-    float origAboveShaderObjRot = m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getRotation() : 0.f;
-    CCPoint origAboveShaderObjPos = m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getPosition() : CCPoint{0, 0};
+    float origAboveShaderObjScaleX =
+        m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getScaleX() : 1.f;
+    float origAboveShaderObjScaleY =
+        m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getScaleY() : 1.f;
+    float origAboveShaderObjRot = m_aboveShaderObjectLayer
+                                      ? m_aboveShaderObjectLayer->getRotation()
+                                      : 0.f;
+    CCPoint origAboveShaderObjPos =
+        m_aboveShaderObjectLayer ? m_aboveShaderObjectLayer->getPosition()
+                                 : CCPoint{0, 0};
 
     CCPoint origBgPos = {0, 0};
-    float origBgScaleX = 1.f;
-    float origBgScaleY = 1.f;
-    float origBgRot = 0.f;
+    float origBgScaleX = 1.0f;
+    float origBgScaleY = 1.0f;
+    float origBgRot = 0.0f;
     bool hasBg = m_background != nullptr;
     if (hasBg) {
       origBgPos = m_background->getPosition();
@@ -865,34 +869,34 @@ class $modify(MyBGL, GJBaseGameLayer) {
       origBgRot = m_background->getRotation();
     }
 
+    float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
     bool dead = m_playerDied;
 
     auto extrapolatePlayer =
-        [&](PlayerObject* player, PlayerState& state,
-            const std::vector<PlayerButtonCommand>& pendingClicks,
+        [&](PlayerObject *player, PlayerState &state,
+            const std::vector<PlayerButtonCommand> &pendingClicks,
             double tCurrent, double timeScale) {
           double dtSeconds = tCurrent - state.lastTime;
           if (dtSeconds < 0.0)
             dtSeconds = 0.0;
 
-          g_extrapData.sortedClicks = pendingClicks;
-          auto& sortedClicks = g_extrapData.sortedClicks;
-
+          std::vector<PlayerButtonCommand> sortedClicks = pendingClicks;
           if (g_cbfSoftToggle && m_clickBetweenSteps) {
             double stepDuration = (0.25 / 60.0) / timeScale;
-            for (auto& cmd : sortedClicks) {
+            for (auto &cmd : sortedClicks) {
               double elapsed = cmd.m_timestamp - state.lastTime;
               if (elapsed < 0.0)
                 elapsed = 0.0;
               int stepIndex = static_cast<int>(elapsed / stepDuration);
-              cmd.m_timestamp = state.lastTime + (stepIndex + 0.5) * stepDuration;
+              cmd.m_timestamp =
+                  state.lastTime + (stepIndex + 0.5) * stepDuration;
             }
           }
-
-          std::sort(sortedClicks.begin(), sortedClicks.end(),
-                    [](const PlayerButtonCommand& a, const PlayerButtonCommand& b) {
-                      return a.m_timestamp < b.m_timestamp;
-                    });
+          std::sort(
+              sortedClicks.begin(), sortedClicks.end(),
+              [](const PlayerButtonCommand &a, const PlayerButtonCommand &b) {
+                return a.m_timestamp < b.m_timestamp;
+              });
 
           g_extrapolating = true;
 
@@ -902,13 +906,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
             double remaining = dtFrames;
-            constexpr double stepSize = 0.25;
+            double stepSize = 0.25;
 
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
               float delta = static_cast<float>(currentStep);
 
               m_fields->m_enableSolidCollisions = true;
+
               player->m_playEffects = false;
 
               if (player->m_collisionLogTop)
@@ -920,17 +925,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
               if (player->m_collisionLogRight)
                 player->m_collisionLogRight->removeAllObjects();
 
-              int origNoAutoJump = player->m_stateNoAutoJump;
-              int origDartSlide = player->m_stateDartSlide;
-              int origHitHead = player->m_stateHitHead;
-              int origFlipGravity = player->m_stateFlipGravity;
-
               player->update(delta);
-
-              player->m_stateNoAutoJump = origNoAutoJump;
-              player->m_stateDartSlide = origDartSlide;
-              player->m_stateHitHead = origHitHead;
-              player->m_stateFlipGravity = origFlipGravity;
 
               float yBefore = player->getPositionY();
               double yVelBefore = player->m_yVelocity;
@@ -938,12 +933,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
               this->checkCollisions(player, delta, true);
               phys::checkSpawnObjects(this, player);
-
               if (!player->m_isOnSlope && player->m_stateDartSlide <= 0) {
                 float yAfter = player->getPositionY();
                 float pushOutY = yAfter - yBefore - m_fields->m_teleportYOffset;
 
-                if (player->m_lastCollisionLeft > 0 || player->m_lastCollisionRight > 0) {
+                if (player->m_lastCollisionLeft > 0 ||
+                    player->m_lastCollisionRight > 0) {
                   if (pushOutY > 0.01f && yVelBefore > 0.05) {
                     float targetY = yBefore + m_fields->m_teleportYOffset;
                     player->setPositionY(targetY);
@@ -965,11 +960,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
             m_fields->m_enableSolidCollisions = true;
           };
 
-          for (const auto& cmd : sortedClicks) {
+          for (const auto &cmd : sortedClicks) {
             if (cmd.m_timestamp > currentTime && cmd.m_timestamp < targetTime) {
               double dt = (cmd.m_timestamp - currentTime) * timeScale;
               double dtFrames = dt * 60.0;
+
               updatePlayerSubstepped(dtFrames);
+
               currentTime = cmd.m_timestamp;
 
               if (cmd.m_isPush) {
@@ -983,96 +980,131 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (targetTime > currentTime) {
             double dt = (targetTime - currentTime) * timeScale;
             double dtFrames = dt * 60.0;
+
             updatePlayerSubstepped(dtFrames);
           }
 
           player->m_isDead = false;
+
           g_extrapolating = false;
         };
 
+    // EXCEPTION SAFETY AROUND MAIN EXTRAPOLATION LOOP
     try {
       if (hasP1 && m_fields->m_fakePlayer1) {
-        auto& state = m_fields->p1;
+        auto &state = m_fields->p1;
         if (state.lastTime != 0 && !dead) {
           double tCurrent = getCurrentTimestamp();
-          double timeScale = computeSafeTimeScale(state, m_gameState.m_timeWarp);
-          double dtSeconds = computeClampedDtSeconds(state, tCurrent, timeScale);
+          double timeScale = m_gameState.m_timeWarp;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+              state.lastDt > 0.0001f) {
+            double diff = state.lastTime - state.prevTime;
+            if (diff > 0.001) {
+              timeScale = (state.lastDt / 60.0f) / diff;
+            }
+          }
+          double dtSeconds = tCurrent - state.lastTime;
+          if (dtSeconds < 0.0) {
+            dtSeconds = 0.0;
+          }
+          double maxDtSeconds = 0.0;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+            maxDtSeconds = state.lastTime - state.prevTime;
+          } else {
+            maxDtSeconds = (state.lastDt > 0.0001f)
+                               ? (state.lastDt / 60.0f / timeScale)
+                               : 0.033;
+          }
+          if (dtSeconds > maxDtSeconds) {
+            dtSeconds = maxDtSeconds;
+          }
           double tCurrentClamped = state.lastTime + dtSeconds;
 
           if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-            g_extrapData.pendingClicks.clear();
+            std::vector<PlayerButtonCommand> pendingClicks;
             if (hasCBF) {
-              bool isTwoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
-              for (const auto& cmd : m_queuedButtons) {
+              bool isTwoPlayer =
+                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
+              for (const auto &cmd : m_queuedButtons) {
                 bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
                 if (isTarget && cmd.m_timestamp > state.lastTime &&
                     cmd.m_timestamp <= tCurrentClamped) {
-                  g_extrapData.pendingClicks.push_back(cmd);
+                  pendingClicks.push_back(cmd);
                 }
               }
             }
 
             syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
+
             origP1State = saveRenderPlayerState(m_player1);
             savedP1State = true;
+
             simulatedP1 = true;
 
-            extrapolatePlayer(m_fields->m_fakePlayer1, state, g_extrapData.pendingClicks,
+            extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
                               tCurrentClamped, timeScale);
 
-            if (m_player1->m_stateDartSlide > 0 && !m_player1->m_isOnSlope) {
-              auto fakePos = m_fields->m_fakePlayer1->getPosition();
-              auto fakeRobPos = m_fields->m_fakePlayer1->m_position;
-              fakePos.y = origP1State.nodePos.y;
-              fakeRobPos.y = origP1State.robPos.y;
-              m_fields->m_fakePlayer1->CCNode::setPosition(fakePos);
-              m_fields->m_fakePlayer1->m_position = fakeRobPos;
-            }
-
-            applyRenderPlayerStateFromFake(m_player1, m_fields->m_fakePlayer1);
+            applyRenderPlayerStateFromFake(m_player1,
+                                         m_fields->m_fakePlayer1);
           }
         }
       }
 
       if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
-        auto& state = m_fields->p2;
+        auto &state = m_fields->p2;
         if (state.lastTime != 0 && !dead) {
           double tCurrent = getCurrentTimestamp();
-          double timeScale = computeSafeTimeScale(state, m_gameState.m_timeWarp);
-          double dtSeconds = computeClampedDtSeconds(state, tCurrent, timeScale);
+          double timeScale = m_gameState.m_timeWarp;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+              state.lastDt > 0.0001f) {
+            double diff = state.lastTime - state.prevTime;
+            if (diff > 0.001) {
+              timeScale = (state.lastDt / 60.0f) / diff;
+            }
+          }
+          double dtSeconds = tCurrent - state.lastTime;
+          if (dtSeconds < 0.0) {
+            dtSeconds = 0.0;
+          }
+          double maxDtSeconds = 0.0;
+          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+            maxDtSeconds = state.lastTime - state.prevTime;
+          } else {
+            maxDtSeconds = (state.lastDt > 0.0001f)
+                               ? (state.lastDt / 60.0f / timeScale)
+                               : 0.033;
+          }
+          if (dtSeconds > maxDtSeconds) {
+            dtSeconds = maxDtSeconds;
+          }
           double tCurrentClamped = state.lastTime + dtSeconds;
 
           if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-            g_extrapData.pendingClicks.clear();
+            std::vector<PlayerButtonCommand> pendingClicks;
             if (hasCBF) {
-              bool isTwoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
-              for (const auto& cmd : m_queuedButtons) {
+              bool isTwoPlayer =
+                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
+              for (const auto &cmd : m_queuedButtons) {
                 bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
                 if (isTarget && cmd.m_timestamp > state.lastTime &&
                     cmd.m_timestamp <= tCurrentClamped) {
-                  g_extrapData.pendingClicks.push_back(cmd);
+                  pendingClicks.push_back(cmd);
                 }
               }
             }
 
             syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
+
             origP2State = saveRenderPlayerState(m_player2);
             savedP2State = true;
+
             simulatedP2 = true;
 
-            extrapolatePlayer(m_fields->m_fakePlayer2, state, g_extrapData.pendingClicks,
+            extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
                               tCurrentClamped, timeScale);
 
-            if (m_player2->m_stateDartSlide > 0 && !m_player2->m_isOnSlope) {
-              auto fakePos = m_fields->m_fakePlayer2->getPosition();
-              auto fakeRobPos = m_fields->m_fakePlayer2->m_position;
-              fakePos.y = origP2State.nodePos.y;
-              fakeRobPos.y = origP2State.robPos.y;
-              m_fields->m_fakePlayer2->CCNode::setPosition(fakePos);
-              m_fields->m_fakePlayer2->m_position = fakeRobPos;
-            }
-
-            applyRenderPlayerStateFromFake(m_player2, m_fields->m_fakePlayer2);
+            applyRenderPlayerStateFromFake(m_player2,
+                                         m_fields->m_fakePlayer2);
           }
         }
       }
@@ -1086,8 +1118,31 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
-      double timeScale = computeSafeTimeScale(m_fields->p1, m_gameState.m_timeWarp);
-      double dtSeconds = computeClampedDtSeconds(m_fields->p1, tCurrent, timeScale);
+      double timeScale = m_gameState.m_timeWarp;
+      if (m_fields->p1.prevTime > 0.0001 &&
+          m_fields->p1.lastTime > m_fields->p1.prevTime &&
+          m_fields->p1.lastDt > 0.0001f) {
+        double diff = m_fields->p1.lastTime - m_fields->p1.prevTime;
+        if (diff > 0.001) {
+          timeScale = (m_fields->p1.lastDt / 60.0f) / diff;
+        }
+      }
+      double dtSeconds = tCurrent - m_fields->p1.lastTime;
+      if (dtSeconds < 0.0) {
+        dtSeconds = 0.0;
+      }
+      double maxDtSeconds = 0.0;
+      if (m_fields->p1.prevTime > 0.0001 &&
+          m_fields->p1.lastTime > m_fields->p1.prevTime) {
+        maxDtSeconds = m_fields->p1.lastTime - m_fields->p1.prevTime;
+      } else {
+        maxDtSeconds = (m_fields->p1.lastDt > 0.0001f)
+                           ? (m_fields->p1.lastDt / 60.0f / timeScale)
+                           : 0.033;
+      }
+      if (dtSeconds > maxDtSeconds) {
+        dtSeconds = maxDtSeconds;
+      }
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
         camState = saveCameraState();
@@ -1098,20 +1153,20 @@ class $modify(MyBGL, GJBaseGameLayer) {
         float dtFloat = static_cast<float>(warpedDt);
 
         gd::unordered_map<int, GJValueTween> filteredTweens;
-        for (const auto& [actionID, tween] : m_gameState.m_tweenActions) {
+        for (const auto &[actionID, tween] : m_gameState.m_tweenActions) {
           if (actionID == 1 || actionID == 2 || actionID == 7 ||
-              (actionID >= 10 && actionID <= 19) || actionID == 21 || actionID == 22) {
+              (actionID >= 10 && actionID <= 19) || actionID == 21 ||
+              actionID == 22) {
             filteredTweens[actionID] = tween;
           }
         }
         m_gameState.m_tweenActions = filteredTweens;
+
         m_gameState.updateTweenActions(dtFloat);
 
         bool tempCalculate = m_calculateTargetHeightOffset;
         m_calculateTargetHeightOffset = false;
-        g_extrapolating = true;
         this->updateCamera(dtFloat);
-        g_extrapolating = false;
         m_calculateTargetHeightOffset = tempCalculate;
       }
     }
@@ -1128,13 +1183,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_objectLayer->setScaleY(origObjScaleY);
         m_objectLayer->setRotation(origObjRot);
       }
-
       restoreGroundState(m_groundLayer, groundState1);
       restoreGroundState(m_groundLayer2, groundState2);
 
-      restoreNodePositions(savedGroundChildren1, m_groundLayer, g_extrapData.aliveNodes);
-      restoreNodePositions(savedGroundChildren2, m_groundLayer2, g_extrapData.aliveNodes);
-      restoreNodePositions(savedMiddleground, m_middleground, g_extrapData.aliveNodesMiddleground);
+      restoreNodePositions(savedGroundChildren1, m_groundLayer);
+      restoreNodePositions(savedGroundChildren2, m_groundLayer2);
 
       if (hasBg) {
         m_background->setPosition(origBgPos);
@@ -1180,25 +1233,88 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 };
 
-static bool isFakePlayer(PlayerObject* player) {
+// ==========================================
+// iOS INLINE FIX & SAFE CLEANUP
+// ==========================================
+
+class $modify(MyPlayLayer, PlayLayer) {
+  void resetLevel() {
+    PlayLayer::resetLevel();
+
+    try {
+      if (!g_softToggle) {
+        if (m_player1) {
+          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+            myBgl->m_fields->p1 = PlayerState();
+          }
+          if (m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
+            m_player1->m_waveTrail->m_pointArray->removeAllObjects();
+          }
+        }
+        if (m_player2) {
+          if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+            myBgl->m_fields->p2 = PlayerState();
+          }
+          if (m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
+            m_player2->m_waveTrail->m_pointArray->removeAllObjects();
+          }
+        }
+
+        if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer*>(this))) {
+          if (myBgl->m_fields->m_fakePlayer1 && myBgl->m_fields->m_fakePlayer1->m_waveTrail) {
+            if (myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
+              myBgl->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
+            }
+          }
+          if (myBgl->m_fields->m_fakePlayer2 && myBgl->m_fields->m_fakePlayer2->m_waveTrail) {
+            if (myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
+              myBgl->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
+            }
+          }
+        }
+      }
+      g_extrapData.cleanup();
+    } catch(...) {
+      log::error("Error during PlayLayer::resetLevel cleanup!");
+    }
+  }
+};
+
+class $modify(CBFEditorLayer, LevelEditorLayer) {
+  void resetLevel() {
+    LevelEditorLayer::resetLevel();
+    try {
+      g_extrapData.cleanup();
+    } catch(...) {
+      log::error("Error during LevelEditorLayer::resetLevel cleanup!");
+    }
+  }
+};
+
+static bool isFakePlayer(PlayerObject *player) {
   return Bot::get()->trajectory().isFakePlayer(player);
 }
 
 class $modify(MyPlayer, PlayerObject) {
-  static void onModify(auto& self) {
+  static void onModify(auto &self) {
     (void)self.setHookPriority("PlayerObject::update", Priority::VeryEarly);
-    (void)self.setHookPriorityPre("PlayerObject::playDeathEffect", Priority::First - 100);
+    (void)self.setHookPriorityPre("PlayerObject::playDeathEffect",
+                                  Priority::First - 100);
     (void)self.setHookPriority("PlayerObject::ringJump", Priority::VeryEarly);
     (void)self.setHookPriority("PlayerObject::bumpPlayer", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayerObject::propellPlayer", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayerObject::startDashing", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayerObject::spiderTestJumpInternal", Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::propellPlayer",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::startDashing",
+                               Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::spiderTestJumpInternal",
+                               Priority::VeryEarly);
 #ifdef GEODE_IS_WINDOWS
-    (void)self.setHookPriority("PlayerObject::stopDashing", Priority::VeryEarly);
+    (void)self.setHookPriority("PlayerObject::stopDashing",
+                               Priority::VeryEarly);
 #endif
   }
 
-  void ringJump(RingObject* ring, bool unk) {
+  void ringJump(RingObject *ring, bool unk) {
     if (g_softToggle) {
       PlayerObject::ringJump(ring, unk);
       return;
@@ -1210,7 +1326,8 @@ class $modify(MyPlayer, PlayerObject) {
     }
   }
 
-  void bumpPlayer(float force, int objectType, bool playEffect, GameObject* object) {
+  void bumpPlayer(float force, int objectType, bool playEffect,
+                  GameObject *object) {
     if (g_softToggle) {
       PlayerObject::bumpPlayer(force, objectType, playEffect, object);
       return;
@@ -1234,7 +1351,7 @@ class $modify(MyPlayer, PlayerObject) {
     }
   }
 
-  void startDashing(DashRingObject* obj) {
+  void startDashing(DashRingObject *obj) {
     if (g_softToggle) {
       PlayerObject::startDashing(obj);
       return;
@@ -1278,9 +1395,9 @@ class $modify(MyPlayer, PlayerObject) {
     }
 
     auto gameLayer = this->m_gameLayer;
-    MyBGL* myGL = nullptr;
-    if (gameLayer && geode::cast::typeinfo_cast<PlayLayer*>(gameLayer)) {
-      myGL = static_cast<MyBGL*>(gameLayer);
+    MyBGL *myGL = nullptr;
+    if (gameLayer && geode::cast::typeinfo_cast<PlayLayer *>(gameLayer)) {
+      myGL = static_cast<MyBGL *>(gameLayer);
     }
 
     if (isFakePlayer(this)) {
@@ -1289,7 +1406,7 @@ class $modify(MyPlayer, PlayerObject) {
       return;
     }
 
-    PlayerState* state = nullptr;
+    PlayerState *state = nullptr;
     if (myGL) {
       bool isP1 = (this == gameLayer->m_player1);
       state = &(isP1 ? myGL->m_fields->p1 : myGL->m_fields->p2);
@@ -1297,9 +1414,8 @@ class $modify(MyPlayer, PlayerObject) {
 
     CCPoint posBefore = this->getPosition();
     float rotBefore = this->getRotation();
-    CCPoint velBefore =
-        CCPoint(static_cast<float>(this->getCurrentXVelocity()),
-                static_cast<float>(this->m_yVelocity));
+    CCPoint velBefore = CCPoint(static_cast<float>(this->getCurrentXVelocity()),
+                                static_cast<float>(this->m_yVelocity));
 
     if (state) {
       if (state->steps == 0) {
@@ -1315,9 +1431,8 @@ class $modify(MyPlayer, PlayerObject) {
 
     if (state) {
       state->lastTime = getCurrentTimestamp();
-      state->lastVel =
-          CCPoint(static_cast<float>(this->getCurrentXVelocity()),
-                  static_cast<float>(this->m_yVelocity));
+      state->lastVel = CCPoint(static_cast<float>(this->getCurrentXVelocity()),
+                               static_cast<float>(this->m_yVelocity));
       state->lastDt += dt;
       state->steps++;
     }
@@ -1333,9 +1448,9 @@ class $modify(MyPlayer, PlayerObject) {
       PlayerObject::spiderTestJumpInternal(dynamic);
       double yAfter = this->getPositionY();
       auto gameLayer = this->m_gameLayer;
-      MyBGL* myGL = nullptr;
-      if (gameLayer && geode::cast::typeinfo_cast<PlayLayer*>(gameLayer)) {
-        myGL = static_cast<MyBGL*>(gameLayer);
+      MyBGL *myGL = nullptr;
+      if (gameLayer && geode::cast::typeinfo_cast<PlayLayer *>(gameLayer)) {
+        myGL = static_cast<MyBGL *>(gameLayer);
       }
       if (myGL) {
         myGL->m_fields->m_teleportYOffset += (yAfter - yBefore);
@@ -1343,170 +1458,5 @@ class $modify(MyPlayer, PlayerObject) {
     } else {
       PlayerObject::spiderTestJumpInternal(dynamic);
     }
-  }
-};
-
-class $modify(MyPlayLayer, PlayLayer) {
-  static void onModify(auto& self) {
-    (void)self.setHookPriority("PlayLayer::init", Priority::VeryEarly);
-    (void)self.setHookPriorityPre("PlayLayer::destroyPlayer", Priority::First - 100);
-    (void)self.setHookPriority("PlayLayer::resetLevel", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayLayer::resetLevelFromStart", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayLayer::delayedResetLevel", Priority::VeryEarly);
-    (void)self.setHookPriority("PlayLayer::fullReset", Priority::VeryEarly);
-  }
-
-  bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-    if (!PlayLayer::init(level, useReplay, dontCreateObjects))
-      return false;
-    return true;
-  }
-
-  void resetExtrapolation() {
-    auto myGL = static_cast<MyBGL*>(static_cast<GJBaseGameLayer*>(this));
-    if (myGL) {
-      myGL->m_fields->p1 = PlayerState();
-      myGL->m_fields->p2 = PlayerState();
-
-      if (m_player1 && m_player1->m_waveTrail && m_player1->m_waveTrail->m_pointArray) {
-        m_player1->m_waveTrail->m_pointArray->removeAllObjects();
-      }
-      if (m_player2 && m_player2->m_waveTrail && m_player2->m_waveTrail->m_pointArray) {
-        m_player2->m_waveTrail->m_pointArray->removeAllObjects();
-      }
-      if (myGL->m_fields->m_fakePlayer1 && myGL->m_fields->m_fakePlayer1->m_waveTrail &&
-          myGL->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray) {
-        myGL->m_fields->m_fakePlayer1->m_waveTrail->m_pointArray->removeAllObjects();
-      }
-      if (myGL->m_fields->m_fakePlayer2 && myGL->m_fields->m_fakePlayer2->m_waveTrail &&
-          myGL->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray) {
-        myGL->m_fields->m_fakePlayer2->m_waveTrail->m_pointArray->removeAllObjects();
-      }
-    }
-    g_extrapData.cleanup();
-  }
-
-  void destroyPlayer(PlayerObject* player, GameObject* object) override {
-    if (g_softToggle) {
-      PlayLayer::destroyPlayer(player, object);
-      return;
-    }
-    auto myGL = static_cast<MyBGL*>(static_cast<GJBaseGameLayer*>(this));
-    if (myGL) {
-      if (player == myGL->m_fields->m_fakePlayer1)
-        return;
-      if (player == myGL->m_fields->m_fakePlayer2)
-        return;
-    }
-    PlayLayer::destroyPlayer(player, object);
-  }
-
-  void resetLevel() override {
-    PlayLayer::resetLevel();
-    if (!g_softToggle) {
-      try {
-        resetExtrapolation();
-      } catch (...) {
-        log::error("Error during PlayLayer::resetLevel cleanup!");
-      }
-    }
-  }
-
-  void loadFromCheckpoint(CheckpointObject* object) {
-    PlayLayer::loadFromCheckpoint(object);
-    if (!g_softToggle) {
-      try {
-        resetExtrapolation();
-      } catch (...) {
-        log::error("Error during PlayLayer::loadFromCheckpoint cleanup!");
-      }
-    }
-  }
-
-  void resetLevelFromStart() {
-    PlayLayer::resetLevelFromStart();
-    if (!g_softToggle) {
-      try {
-        resetExtrapolation();
-      } catch (...) {
-        log::error("Error during PlayLayer::resetLevelFromStart cleanup!");
-      }
-    }
-  }
-
-  void delayedResetLevel() {
-    PlayLayer::delayedResetLevel();
-    if (!g_softToggle) {
-      try {
-        resetExtrapolation();
-      } catch (...) {
-        log::error("Error during PlayLayer::delayedResetLevel cleanup!");
-      }
-    }
-  }
-
-  void fullReset() {
-    PlayLayer::fullReset();
-    if (!g_softToggle) {
-      try {
-        resetExtrapolation();
-      } catch (...) {
-        log::error("Error during PlayLayer::fullReset cleanup!");
-      }
-    }
-  }
-};
-
-class $modify(CBFEditorLayer, LevelEditorLayer) {
-  void resetLevel() {
-    LevelEditorLayer::resetLevel();
-    try {
-      g_extrapData.cleanup();
-    } catch (...) {
-      log::error("Error during LevelEditorLayer::resetLevel cleanup!");
-    }
-  }
-};
-
-class $modify(MyRingObject, RingObject) {
-  void spawnCircle() {
-    if (g_softToggle) {
-      RingObject::spawnCircle();
-      return;
-    }
-    if (g_extrapolating) {
-      return;
-    }
-    RingObject::spawnCircle();
-  }
-};
-
-class $modify(MyEnhancedGameObject, EnhancedGameObject) {
-  void activatedByPlayer(PlayerObject* player) {
-    if (g_softToggle) {
-      EnhancedGameObject::activatedByPlayer(player);
-      return;
-    }
-    if (isFakePlayer(player)) {
-      phys::activateForTrajectory(reinterpret_cast<EffectGameObject*>(this), player);
-    } else {
-      EnhancedGameObject::activatedByPlayer(player);
-    }
-  }
-};
-
-class $modify(MyGJGroundLayer, GJGroundLayer) {
-  void fadeInGround(float duration) {
-    if (g_extrapolating) {
-      return;
-    }
-    GJGroundLayer::fadeInGround(duration);
-  }
-
-  void fadeOutGround(float duration) {
-    if (g_extrapolating) {
-      return;
-    }
-    GJGroundLayer::fadeOutGround(duration);
   }
 };
