@@ -59,7 +59,7 @@ int checkPlayerCollisions(GJBaseGameLayer *gameLayer, PlayerObject *player) {
   float angleTransformed = (unkAngleHalved + 90.0) - someValue;
 
   bool groundExists =
-      !gameLayer->m_gameState.m_unkBool8 &&
+      !gameLayer->m_gameState.m_isFreeMode &&
       (player->m_isShip || player->m_isBird || player->m_isDart ||
        player->m_isSwing || player->m_isBall || player->m_isSpider ||
        gameLayer->m_gameState.m_isDualMode);
@@ -697,10 +697,13 @@ void checkSpawnObjects(GJBaseGameLayer *pl, PlayerObject *player) {
     return;
   }
 
-  int startingIndex = pl->m_gameState.m_spawnChannelRelated0.at(
-      pl->m_gameState.m_currentChannel);
-  bool goingBack = pl->m_gameState.m_spawnChannelRelated1.at(
-      pl->m_gameState.m_currentChannel);
+  const int channel = pl->m_gameState.m_currentChannel;
+  const auto &related0 = pl->m_gameState.m_spawnChannelRelated0;
+  const auto &related1 = pl->m_gameState.m_spawnChannelRelated1;
+  auto startIt = related0.find(channel);
+  auto backIt = related1.find(channel);
+  int startingIndex = startIt == related0.end() ? 0 : startIt->second;
+  bool goingBack = backIt != related1.end() && backIt->second;
 
   for (int i = startingIndex; static_cast<unsigned int>(i) < objects->count();
        i++) {

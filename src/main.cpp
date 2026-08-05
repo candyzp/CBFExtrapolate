@@ -17,41 +17,6 @@
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
 
-#ifdef GEODE_IS_WINDOWS
-#include <atomic>
-
-enum DeviceType : int8_t {
-  MOUSE,
-  TOUCHPAD,
-  KEYBOARD,
-  TOUCHSCREEN,
-  CONTROLLER,
-  UNKNOWN
-};
-
-struct __attribute__((packed)) LinuxInputEvent {
-  int64_t time;
-  uint16_t type;
-  uint16_t code;
-  int32_t value;
-  DeviceType deviceType;
-};
-
-constexpr size_t RING_BUFFER_SIZE = 256;
-
-struct __attribute__((packed)) SharedMemory {
-  volatile uint32_t head;
-  volatile uint32_t tail;
-  volatile uint32_t error_flag;
-  volatile uint32_t heartbeat;
-  LinuxInputEvent events[RING_BUFFER_SIZE];
-};
-
-static HANDLE g_hShmFile = NULL;
-static HANDLE g_hShmMapping = NULL;
-static SharedMemory *g_pSharedMem = nullptr;
-#endif
-
 using namespace geode::prelude;
 
 static bool g_softToggle = false;
@@ -68,14 +33,6 @@ $on_mod(Loaded) {
     g_cbfSoftToggle = m->getSettingValue<bool>("soft-toggle");
     listenForSettingChanges<bool>(
         "soft-toggle", [](bool value) { g_cbfSoftToggle = value; }, m);
-
-#ifdef GEODE_IS_WINDOWS
-    if (geode::utils::platform::isWine()) {
-      g_linuxNative = m->getSettingValue<bool>("wine-workaround");
-      listenForSettingChanges<bool>(
-          "wine-workaround", [](bool value) { g_linuxNative = value; }, m);
-    }
-#endif
   }
 }
 
@@ -257,287 +214,6 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
   player->release();
   player = nullptr;
 }
-
-#ifdef GEODE_IS_WINDOWS
-inline void initSharedMemory() {
-  if (g_pSharedMem)
-    return;
-  if (!g_linuxNative)
-    return;
-
-  std::string shmName = "cbf-" + std::to_string(GetCurrentProcessId());
-  std::string winShmPath = std::string("Z:\\dev\\shm\\") + shmName;
-
-  g_hShmFile = CreateFileA(winShmPath.c_str(), GENERIC_READ,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (g_hShmFile == INVALID_HANDLE_VALUE) {
-    g_hShmFile = NULL;
-    return;
-  }
-
-  g_hShmMapping = CreateFileMappingA(g_hShmFile, NULL, PAGE_READONLY, 0,
-                                     sizeof(SharedMemory), NULL);
-  if (!g_hShmMapping) {
-    CloseHandle(g_hShmFile);
-    g_hShmFile = NULL;
-    return;
-  }
-
-  g_pSharedMem = static_cast<SharedMemory *>(
-      MapViewOfFile(g_hShmMapping, FILE_MAP_READ, 0, 0, sizeof(SharedMemory)));
-  if (!g_pSharedMem) {
-    CloseHandle(g_hShmMapping);
-    CloseHandle(g_hShmFile);
-    g_hShmMapping = NULL;
-    g_hShmFile = NULL;
-  }
-}
-
-inline cocos2d::enumKeyCodes evdevToCocos(uint16_t code) {
-  switch (code) {
-  case 57:
-    return cocos2d::KEY_Space;
-  case 17:
-    return cocos2d::KEY_W;
-  case 103:
-    return cocos2d::KEY_ArrowUp;
-  case 105:
-    return cocos2d::KEY_ArrowLeft;
-  case 106:
-    return cocos2d::KEY_ArrowRight;
-  case 108:
-    return cocos2d::KEY_ArrowDown;
-  case 30:
-    return cocos2d::KEY_A;
-  case 32:
-    return cocos2d::KEY_D;
-  case 44:
-    return cocos2d::KEY_Z;
-  case 45:
-    return cocos2d::KEY_X;
-  case 25:
-    return cocos2d::KEY_P;
-  case 16:
-    return cocos2d::KEY_Q;
-  case 18:
-    return cocos2d::KEY_E;
-  case 19:
-    return cocos2d::KEY_R;
-  case 20:
-    return cocos2d::KEY_T;
-  case 21:
-    return cocos2d::KEY_Y;
-  case 22:
-    return cocos2d::KEY_U;
-  case 23:
-    return cocos2d::KEY_I;
-  case 24:
-    return cocos2d::KEY_O;
-  case 31:
-    return cocos2d::KEY_S;
-  case 33:
-    return cocos2d::KEY_F;
-  case 34:
-    return cocos2d::KEY_G;
-  case 35:
-    return cocos2d::KEY_H;
-  case 36:
-    return cocos2d::KEY_J;
-  case 37:
-    return cocos2d::KEY_K;
-  case 38:
-    return cocos2d::KEY_L;
-  case 46:
-    return cocos2d::KEY_C;
-  case 47:
-    return cocos2d::KEY_V;
-  case 48:
-    return cocos2d::KEY_B;
-  case 49:
-    return cocos2d::KEY_N;
-  case 50:
-    return cocos2d::KEY_M;
-  case 2:
-    return cocos2d::KEY_One;
-  case 3:
-    return cocos2d::KEY_Two;
-  case 4:
-    return cocos2d::KEY_Three;
-  case 5:
-    return cocos2d::KEY_Four;
-  case 6:
-    return cocos2d::KEY_Five;
-  case 7:
-    return cocos2d::KEY_Six;
-  case 8:
-    return cocos2d::KEY_Seven;
-  case 9:
-    return cocos2d::KEY_Eight;
-  case 10:
-    return cocos2d::KEY_Nine;
-  case 11:
-    return cocos2d::KEY_Zero;
-  case 82:
-    return cocos2d::KEY_NumPad0;
-  case 79:
-    return cocos2d::KEY_NumPad1;
-  case 80:
-    return cocos2d::KEY_NumPad2;
-  case 81:
-    return cocos2d::KEY_NumPad3;
-  case 75:
-    return cocos2d::KEY_NumPad4;
-  case 76:
-    return cocos2d::KEY_NumPad5;
-  case 77:
-    return cocos2d::KEY_NumPad6;
-  case 71:
-    return cocos2d::KEY_NumPad7;
-  case 72:
-    return cocos2d::KEY_NumPad8;
-  case 73:
-    return cocos2d::KEY_NumPad9;
-  case 28:
-    return cocos2d::KEY_Enter;
-  case 1:
-    return cocos2d::KEY_Escape;
-  case 42:
-    return cocos2d::KEY_LeftShift;
-  case 54:
-    return cocos2d::KEY_RightShift;
-  case 29:
-    return cocos2d::KEY_LeftControl;
-  case 97:
-    return cocos2d::KEY_RightControl;
-  case 56:
-    return cocos2d::KEY_LeftMenu;
-  case 100:
-    return cocos2d::KEY_RightMenu;
-  case 0x130:
-    return cocos2d::CONTROLLER_A;
-  case 0x131:
-    return cocos2d::CONTROLLER_B;
-  case 0x132:
-    return cocos2d::CONTROLLER_X;
-  case 0x133:
-    return cocos2d::CONTROLLER_Y;
-  case 0x136:
-    return cocos2d::CONTROLLER_LB;
-  case 0x137:
-    return cocos2d::CONTROLLER_RB;
-  case 0x138:
-    return cocos2d::CONTROLLER_LT;
-  case 0x139:
-    return cocos2d::CONTROLLER_RT;
-  case 0x13b:
-    return cocos2d::CONTROLLER_Start;
-  case 0x13a:
-    return cocos2d::CONTROLLER_Back;
-  default:
-    return cocos2d::KEY_None;
-  }
-}
-
-inline bool containsKey(const std::vector<cocos2d::enumKeyCodes> &vec,
-                        cocos2d::enumKeyCodes val) {
-  for (auto x : vec) {
-    if (x == val)
-      return true;
-  }
-  return false;
-}
-
-inline std::vector<PlayerButtonCommand>
-getPendingClicksFromSharedMemory(double lastTime, double targetTime,
-                                 bool isTwoPlayer) {
-  std::vector<PlayerButtonCommand> pending;
-  if (!g_pSharedMem)
-    return pending;
-
-  uint32_t h = g_pSharedMem->head;
-  std::atomic_thread_fence(std::memory_order_acquire);
-  uint32_t t = g_pSharedMem->tail;
-
-  static auto customKeybindsMod =
-      Loader::get()->getLoadedMod("geode.custom-keybinds");
-  std::vector<cocos2d::enumKeyCodes> p1Binds;
-  std::vector<cocos2d::enumKeyCodes> p2Binds;
-
-  if (customKeybindsMod) {
-    auto val1 = customKeybindsMod->getSettingValue<std::vector<geode::Keybind>>(
-        "jump-p1");
-    for (const auto &bind : val1) {
-      p1Binds.push_back(bind.key);
-    }
-    auto val2 = customKeybindsMod->getSettingValue<std::vector<geode::Keybind>>(
-        "jump-p2");
-    for (const auto &bind : val2) {
-      p2Binds.push_back(bind.key);
-    }
-  } else {
-    p1Binds = {cocos2d::KEY_Space, cocos2d::KEY_W, cocos2d::CONTROLLER_A,
-               cocos2d::CONTROLLER_Up, cocos2d::CONTROLLER_RB};
-    p2Binds = {cocos2d::KEY_ArrowUp, cocos2d::CONTROLLER_LB,
-               cocos2d::CONTROLLER2_A};
-  }
-
-  while (t != h) {
-    const LinuxInputEvent &ev =
-        g_pSharedMem->events[t & (RING_BUFFER_SIZE - 1)];
-    t++;
-
-    double timestamp =
-        static_cast<double>(ev.time) / static_cast<double>(freq.QuadPart);
-
-    if (timestamp > lastTime && timestamp <= targetTime) {
-      PlayerButton button = PlayerButton::Jump;
-      bool player2 = false;
-      bool valid = false;
-
-      if (ev.type == 1) {
-        if (ev.deviceType == KEYBOARD || ev.deviceType == CONTROLLER) {
-          cocos2d::enumKeyCodes cocosKey = evdevToCocos(ev.code);
-          if (cocosKey != cocos2d::KEY_None) {
-            bool isP1 = containsKey(p1Binds, cocosKey);
-            bool isP2 = containsKey(p2Binds, cocosKey);
-
-            if (isP1) {
-              button = PlayerButton::Jump;
-              player2 = false;
-              valid = true;
-            } else if (isP2) {
-              button = PlayerButton::Jump;
-              player2 = true;
-              valid = true;
-            }
-          }
-        } else if (ev.deviceType == MOUSE || ev.deviceType == TOUCHPAD) {
-          if (ev.code == 0x110) {
-            button = PlayerButton::Jump;
-            player2 = false;
-            valid = true;
-          } else if (ev.code == 0x111) {
-            button = PlayerButton::Jump;
-            player2 = true;
-            valid = true;
-          }
-        }
-      }
-
-      if (valid) {
-        PlayerButtonCommand cmd;
-        cmd.m_button = button;
-        cmd.m_isPlayer2 = player2 && isTwoPlayer;
-        cmd.m_isPush = (ev.value != 0);
-        cmd.m_timestamp = timestamp;
-        pending.push_back(cmd);
-      }
-    }
-  }
-  return pending;
-}
-#endif
 
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
@@ -906,6 +582,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     CCPoint origP1Rob = {0, 0};
     int origTrailCount1 = 0;
     CCPoint origCurrentPoint1 = {0, 0};
+    int origTrailZ1 = 0;
     bool hasTrail1 = false;
     bool simulatedP1 = false;
 
@@ -913,6 +590,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     CCPoint origP2Rob = {0, 0};
     int origTrailCount2 = 0;
     CCPoint origCurrentPoint2 = {0, 0};
+    int origTrailZ2 = 0;
     bool hasTrail2 = false;
     bool simulatedP2 = false;
 
@@ -941,9 +619,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     std::vector<SavedNodeState> savedGroundChildren1;
     std::vector<SavedNodeState> savedGroundChildren2;
+    std::vector<SavedNodeState> savedMiddleground;
 
     saveNodePositionsRecursive(m_groundLayer, savedGroundChildren1);
     saveNodePositionsRecursive(m_groundLayer2, savedGroundChildren2);
+    saveNodePositionsRecursive(m_middleground, savedMiddleground);
 
     float origObjRot = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
     float origGroundRot = m_groundLayer ? m_groundLayer->getRotation() : 0.f;
@@ -1128,18 +808,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
             timeScale = (state.lastDt / 60.0f) / diff;
           }
         }
+        if (!std::isfinite(timeScale) || timeScale <= 0.0) {
+          timeScale = 1.0;
+        }
         double dtSeconds = tCurrent - state.lastTime;
         if (dtSeconds < 0.0) {
           dtSeconds = 0.0;
         }
-        double maxDtSeconds = 0.0;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = state.lastTime - state.prevTime;
-        } else {
-          maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? (state.lastDt / 60.0f / timeScale)
-                             : 0.033;
-        }
+        double maxDtSeconds = (0.25 / 60.0) / timeScale;
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
         }
@@ -1150,29 +826,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (hasCBF) {
             bool isTwoPlayer =
                 m_levelSettings && m_levelSettings->m_twoPlayerMode;
-#ifdef GEODE_IS_WINDOWS
-            if (g_linuxNative) {
-              initSharedMemory();
-              auto clicks = getPendingClicksFromSharedMemory(
-                  state.lastTime, tCurrentClamped, isTwoPlayer);
-              for (const auto &cmd : clicks) {
-                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget) {
-                  pendingClicks.push_back(cmd);
-                }
+            for (const auto &cmd : m_queuedButtons) {
+              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
+                  cmd.m_timestamp <= tCurrentClamped) {
+                pendingClicks.push_back(cmd);
               }
-            } else {
-#endif
-              for (const auto &cmd : m_queuedButtons) {
-                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget && cmd.m_timestamp > state.lastTime &&
-                    cmd.m_timestamp <= tCurrentClamped) {
-                  pendingClicks.push_back(cmd);
-                }
-              }
-#ifdef GEODE_IS_WINDOWS
             }
-#endif
           }
 
           syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
@@ -1183,6 +843,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           hasTrail1 = m_player1->m_waveTrail != nullptr;
           if (hasTrail1) {
             origCurrentPoint1 = m_player1->m_waveTrail->m_currentPoint;
+            origTrailZ1 = m_player1->m_waveTrail->getZOrder();
             if (m_player1->m_waveTrail->m_pointArray) {
               origTrailCount1 = m_player1->m_waveTrail->m_pointArray->count();
             }
@@ -1201,6 +862,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
           m_player1->CCNode::setPosition(fakePos);
           m_player1->m_position = fakeRobPos;
+          if (hasTrail1) {
+            auto trail = m_player1->m_waveTrail;
+            trail->m_currentPoint = fakePos;
+            trail->setZOrder(std::max(origTrailZ1, m_player1->getZOrder() + 1));
+            trail->updateStroke(0.f);
+          }
         }
       }
     }
@@ -1217,18 +884,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
             timeScale = (state.lastDt / 60.0f) / diff;
           }
         }
+        if (!std::isfinite(timeScale) || timeScale <= 0.0) {
+          timeScale = 1.0;
+        }
         double dtSeconds = tCurrent - state.lastTime;
         if (dtSeconds < 0.0) {
           dtSeconds = 0.0;
         }
-        double maxDtSeconds = 0.0;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = state.lastTime - state.prevTime;
-        } else {
-          maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? (state.lastDt / 60.0f / timeScale)
-                             : 0.033;
-        }
+        double maxDtSeconds = (0.25 / 60.0) / timeScale;
         if (dtSeconds > maxDtSeconds) {
           dtSeconds = maxDtSeconds;
         }
@@ -1239,29 +902,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (hasCBF) {
             bool isTwoPlayer =
                 m_levelSettings && m_levelSettings->m_twoPlayerMode;
-#ifdef GEODE_IS_WINDOWS
-            if (g_linuxNative) {
-              initSharedMemory();
-              auto clicks = getPendingClicksFromSharedMemory(
-                  state.lastTime, tCurrentClamped, isTwoPlayer);
-              for (const auto &cmd : clicks) {
-                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget) {
-                  pendingClicks.push_back(cmd);
-                }
+            for (const auto &cmd : m_queuedButtons) {
+              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
+                  cmd.m_timestamp <= tCurrentClamped) {
+                pendingClicks.push_back(cmd);
               }
-            } else {
-#endif
-              for (const auto &cmd : m_queuedButtons) {
-                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget && cmd.m_timestamp > state.lastTime &&
-                    cmd.m_timestamp <= tCurrentClamped) {
-                  pendingClicks.push_back(cmd);
-                }
-              }
-#ifdef GEODE_IS_WINDOWS
             }
-#endif
           }
 
           syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
@@ -1272,6 +919,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           hasTrail2 = m_player2->m_waveTrail != nullptr;
           if (hasTrail2) {
             origCurrentPoint2 = m_player2->m_waveTrail->m_currentPoint;
+            origTrailZ2 = m_player2->m_waveTrail->getZOrder();
             if (m_player2->m_waveTrail->m_pointArray) {
               origTrailCount2 = m_player2->m_waveTrail->m_pointArray->count();
             }
@@ -1290,6 +938,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
           m_player2->CCNode::setPosition(fakePos);
           m_player2->m_position = fakeRobPos;
+          if (hasTrail2) {
+            auto trail = m_player2->m_waveTrail;
+            trail->m_currentPoint = fakePos;
+            trail->setZOrder(std::max(origTrailZ2, m_player2->getZOrder() + 1));
+            trail->updateStroke(0.f);
+          }
         }
       }
     }
@@ -1309,19 +963,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
           timeScale = (m_fields->p1.lastDt / 60.0f) / diff;
         }
       }
+      if (!std::isfinite(timeScale) || timeScale <= 0.0) {
+        timeScale = 1.0;
+      }
       double dtSeconds = tCurrent - m_fields->p1.lastTime;
       if (dtSeconds < 0.0) {
         dtSeconds = 0.0;
       }
-      double maxDtSeconds = 0.0;
-      if (m_fields->p1.prevTime > 0.0001 &&
-          m_fields->p1.lastTime > m_fields->p1.prevTime) {
-        maxDtSeconds = m_fields->p1.lastTime - m_fields->p1.prevTime;
-      } else {
-        maxDtSeconds = (m_fields->p1.lastDt > 0.0001f)
-                           ? (m_fields->p1.lastDt / 60.0f / timeScale)
-                           : 0.033;
-      }
+      double maxDtSeconds = (0.25 / 60.0) / timeScale;
       if (dtSeconds > maxDtSeconds) {
         dtSeconds = maxDtSeconds;
       }
@@ -1346,12 +995,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
         m_gameState.updateTweenActions(dtFloat);
 
-        bool tempCalculate = m_calculateTargetHeightOffset;
-        m_calculateTargetHeightOffset = false;
         g_extrapolating = true;
         this->updateCamera(dtFloat);
         g_extrapolating = false;
-        m_calculateTargetHeightOffset = tempCalculate;
       }
     }
 
@@ -1372,6 +1018,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
       restoreNodePositions(savedGroundChildren1, m_groundLayer);
       restoreNodePositions(savedGroundChildren2, m_groundLayer2);
+      restoreNodePositions(savedMiddleground, m_middleground);
 
       if (hasBg) {
         m_background->setPosition(origBgPos);
@@ -1399,6 +1046,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_player1->m_position = origP1Rob;
 
       if (hasTrail1) {
+        m_player1->m_waveTrail->setZOrder(origTrailZ1);
         m_player1->m_waveTrail->m_currentPoint = origCurrentPoint1;
         auto *pointArray = m_player1->m_waveTrail->m_pointArray;
         if (pointArray) {
@@ -1414,6 +1062,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       m_player2->m_position = origP2Rob;
 
       if (hasTrail2) {
+        m_player2->m_waveTrail->setZOrder(origTrailZ2);
         m_player2->m_waveTrail->m_currentPoint = origCurrentPoint2;
         auto *pointArray = m_player2->m_waveTrail->m_pointArray;
         if (pointArray) {

@@ -1,3 +1,7 @@
+# 2.3.4
+- Removed shared memory reading
+- Various bug fixes
+
 # 2.3.3
 - Keybind support for Linux
 

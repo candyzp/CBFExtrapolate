@@ -14,15 +14,9 @@ inline LARGE_INTEGER freq = []() {
   return f;
 }();
 
-inline bool g_linuxNative = false;
-
 inline TimestampType getCurrentTimestamp() {
   LARGE_INTEGER t;
-  if (g_linuxNative) {
-    GetSystemTimePreciseAsFileTime((FILETIME *)&t);
-  } else {
-    QueryPerformanceCounter(&t);
-  }
+  QueryPerformanceCounter(&t);
   return static_cast<TimestampType>(t.QuadPart) /
          static_cast<TimestampType>(freq.QuadPart);
 }
