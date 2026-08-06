@@ -404,6 +404,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool m_resetPending = false;
     int m_skipFramesAfterReset = 0;
     bool m_disableRestoreThisFrame = false;
+    bool m_baseVisitCalledThisFrame = false;
 
     ~Fields() {
       cleanUpFakePlayer(m_fakePlayer1);
@@ -607,6 +608,21 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!node)
       return;
 
+    // iOS 27 stability: cocos2d's visit traversal can delete child nodes
+    // mid-frame (ground layer children during fade transitions in
+    // particular), and recursing into a half-dead node was a real crash
+    // source. retainCount() == 0 means the node is on its way out; skip it
+    // rather than touch it. (Previous build used getReferenceCount(), which
+    // doesn't exist on CCObject/CCNode in this cocos2d fork - retainCount()
+    // is the real method.)
+    if (node != this && node->retainCount() == 0)
+      return;
+
+    // Hard cap so a degenerate/very deep node tree can't blow up per-frame
+    // cost or recursion depth.
+    if (saved.size() > 4096)
+      return;
+
     SavedNodeState state;
     state.node = node;
     state.position = node->getPosition();
@@ -621,6 +637,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (node->getChildren()) {
       for (auto *child :
            geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
+        if (!child)
+          continue;
         saveNodePositionsRecursive(child, saved);
       }
     }
@@ -868,6 +886,28 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    try {
+      extrapolateVisit(playLayer);
+    } catch (const std::exception &e) {
+      geode::log::warn("CBF Extrapolate: caught exception in extrapolateVisit: {}", e.what());
+      g_extrapolating = false;
+      if (!m_fields->m_baseVisitCalledThisFrame) {
+        GJBaseGameLayer::visit();
+      }
+    } catch (...) {
+      geode::log::warn("CBF Extrapolate: caught unknown exception in extrapolateVisit");
+      g_extrapolating = false;
+      if (!m_fields->m_baseVisitCalledThisFrame) {
+        GJBaseGameLayer::visit();
+      }
+    }
+  }
+
+  void extrapolateVisit(PlayLayer *playLayer) {
+    (void)playLayer;
+
+    m_fields->m_baseVisitCalledThisFrame = false;
+
     ensureFakePlayersReady();
     Bot::get()->trajectory().deactivateAllRemembered();
 
@@ -1060,115 +1100,110 @@ class $modify(MyBGL, GJBaseGameLayer) {
           g_extrapolating = false;
         };
 
-    try {
-      if (hasP1 && m_fields->m_fakePlayer1) {
-        auto &state = m_fields->p1;
-        if (state.lastTime != 0 && !dead) {
-          double tCurrent = getCurrentTimestamp();
-          double timeScale = m_gameState.m_timeWarp;
-          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-              state.lastDt > 0.0001f) {
-            double diff = state.lastTime - state.prevTime;
-            if (diff > 0.001) {
-              timeScale = (state.lastDt / 60.0f) / diff;
-            }
-          }
-          double dtSeconds = tCurrent - state.lastTime;
-          if (dtSeconds < 0.0) dtSeconds = 0.0;
-          double maxDtSeconds = 0.0;
-          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-            maxDtSeconds = state.lastTime - state.prevTime;
-          } else {
-            maxDtSeconds = (state.lastDt > 0.0001f)
-                               ? (state.lastDt / 60.0f / timeScale)
-                               : 0.033;
-          }
-          if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
-          double tCurrentClamped = state.lastTime + dtSeconds;
-
-          if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-            m_fields->m_pendingClicks1.clear();
-            if (hasCBF) {
-              bool isTwoPlayer =
-                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
-              for (const auto &cmd : m_queuedButtons) {
-                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget && cmd.m_timestamp > state.lastTime &&
-                    cmd.m_timestamp <= tCurrentClamped) {
-                  m_fields->m_pendingClicks1.push_back(cmd);
-                }
-              }
-            }
-
-            syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
-            origP1State = saveRenderPlayerState(m_player1);
-            savedP1State = true;
-            simulatedP1 = true;
-
-            extrapolatePlayer(m_fields->m_fakePlayer1, state,
-                              m_fields->m_pendingClicks1, tCurrentClamped,
-                              timeScale);
-
-            applyRenderPlayerStateFromFake(m_player1, m_fields->m_fakePlayer1);
+    if (hasP1 && m_fields->m_fakePlayer1) {
+      auto &state = m_fields->p1;
+      if (state.lastTime != 0 && !dead) {
+        double tCurrent = getCurrentTimestamp();
+        double timeScale = m_gameState.m_timeWarp;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+            state.lastDt > 0.0001f) {
+          double diff = state.lastTime - state.prevTime;
+          if (diff > 0.001) {
+            timeScale = (state.lastDt / 60.0f) / diff;
           }
         }
-      }
+        double dtSeconds = tCurrent - state.lastTime;
+        if (dtSeconds < 0.0) dtSeconds = 0.0;
+        double maxDtSeconds = 0.0;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+          maxDtSeconds = state.lastTime - state.prevTime;
+        } else {
+          maxDtSeconds = (state.lastDt > 0.0001f)
+                             ? (state.lastDt / 60.0f / timeScale)
+                             : 0.033;
+        }
+        if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
+        double tCurrentClamped = state.lastTime + dtSeconds;
 
-      if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
-        auto &state = m_fields->p2;
-        if (state.lastTime != 0 && !dead) {
-          double tCurrent = getCurrentTimestamp();
-          double timeScale = m_gameState.m_timeWarp;
-          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-              state.lastDt > 0.0001f) {
-            double diff = state.lastTime - state.prevTime;
-            if (diff > 0.001) {
-              timeScale = (state.lastDt / 60.0f) / diff;
-            }
-          }
-          double dtSeconds = tCurrent - state.lastTime;
-          if (dtSeconds < 0.0) dtSeconds = 0.0;
-          double maxDtSeconds = 0.0;
-          if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-            maxDtSeconds = state.lastTime - state.prevTime;
-          } else {
-            maxDtSeconds = (state.lastDt > 0.0001f)
-                               ? (state.lastDt / 60.0f / timeScale)
-                               : 0.033;
-          }
-          if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
-          double tCurrentClamped = state.lastTime + dtSeconds;
-
-          if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-            m_fields->m_pendingClicks2.clear();
-            if (hasCBF) {
-              bool isTwoPlayer =
-                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
-              for (const auto &cmd : m_queuedButtons) {
-                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-                if (isTarget && cmd.m_timestamp > state.lastTime &&
-                    cmd.m_timestamp <= tCurrentClamped) {
-                  m_fields->m_pendingClicks2.push_back(cmd);
-                }
+        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+          m_fields->m_pendingClicks1.clear();
+          if (hasCBF) {
+            bool isTwoPlayer =
+                m_levelSettings && m_levelSettings->m_twoPlayerMode;
+            for (const auto &cmd : m_queuedButtons) {
+              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
+                  cmd.m_timestamp <= tCurrentClamped) {
+                m_fields->m_pendingClicks1.push_back(cmd);
               }
             }
-
-            syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
-            origP2State = saveRenderPlayerState(m_player2);
-            savedP2State = true;
-            simulatedP2 = true;
-
-            extrapolatePlayer(m_fields->m_fakePlayer2, state,
-                              m_fields->m_pendingClicks2, tCurrentClamped,
-                              timeScale);
-
-            applyRenderPlayerStateFromFake(m_player2, m_fields->m_fakePlayer2);
           }
+
+          syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
+          origP1State = saveRenderPlayerState(m_player1);
+          savedP1State = true;
+          simulatedP1 = true;
+
+          extrapolatePlayer(m_fields->m_fakePlayer1, state,
+                            m_fields->m_pendingClicks1, tCurrentClamped,
+                            timeScale);
+
+          applyRenderPlayerStateFromFake(m_player1, m_fields->m_fakePlayer1);
         }
       }
-    } catch (...) {
-      log::error("Crash prevented in visit extrapolation loop.");
-      g_extrapolating = false;
+    }
+
+    if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
+      auto &state = m_fields->p2;
+      if (state.lastTime != 0 && !dead) {
+        double tCurrent = getCurrentTimestamp();
+        double timeScale = m_gameState.m_timeWarp;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+            state.lastDt > 0.0001f) {
+          double diff = state.lastTime - state.prevTime;
+          if (diff > 0.001) {
+            timeScale = (state.lastDt / 60.0f) / diff;
+          }
+        }
+        double dtSeconds = tCurrent - state.lastTime;
+        if (dtSeconds < 0.0) dtSeconds = 0.0;
+        double maxDtSeconds = 0.0;
+        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+          maxDtSeconds = state.lastTime - state.prevTime;
+        } else {
+          maxDtSeconds = (state.lastDt > 0.0001f)
+                             ? (state.lastDt / 60.0f / timeScale)
+                             : 0.033;
+        }
+        if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
+        double tCurrentClamped = state.lastTime + dtSeconds;
+
+        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+          m_fields->m_pendingClicks2.clear();
+          if (hasCBF) {
+            bool isTwoPlayer =
+                m_levelSettings && m_levelSettings->m_twoPlayerMode;
+            for (const auto &cmd : m_queuedButtons) {
+              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+              if (isTarget && cmd.m_timestamp > state.lastTime &&
+                  cmd.m_timestamp <= tCurrentClamped) {
+                m_fields->m_pendingClicks2.push_back(cmd);
+              }
+            }
+          }
+
+          syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
+          origP2State = saveRenderPlayerState(m_player2);
+          savedP2State = true;
+          simulatedP2 = true;
+
+          extrapolatePlayer(m_fields->m_fakePlayer2, state,
+                            m_fields->m_pendingClicks2, tCurrentClamped,
+                            timeScale);
+
+          applyRenderPlayerStateFromFake(m_player2, m_fields->m_fakePlayer2);
+        }
+      }
     }
 
     bool cameraExtrapolated = false;
@@ -1227,6 +1262,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     GJBaseGameLayer::visit();
+    m_fields->m_baseVisitCalledThisFrame = true;
 
     if (cameraExtrapolated) {
       restoreCameraState(camState);
