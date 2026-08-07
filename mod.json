@@ -34,9 +34,25 @@
     },
     "debug-extrapolation": {
       "name": "Debug Extrapolation",
-      "description": "Logs extrapolation timing, clamps, queued inputs, and reset skips for debugging frame pacing issues.",
+      "description": "Logs extrapolation timing and reset skips for debugging frame pacing issues.",
       "type": "bool",
       "default": false
+    },
+    "render-extrapolation-scale": {
+      "name": "Render Extrapolation Scale",
+      "description": "Multiplies render-side extrapolation to make the effect more noticeable while staying clamp-limited.",
+      "type": "float",
+      "default": 1.35,
+      "min": 0.0,
+      "max": 2.0
+    },
+    "render-extrapolation-min-frames": {
+      "name": "Render Extrapolation Min Frames",
+      "description": "Minimum render extrapolation amount in frames so small timing gaps still produce visible movement.",
+      "type": "float",
+      "default": 0.35,
+      "min": 0.0,
+      "max": 1.0
     }
   }
 }
