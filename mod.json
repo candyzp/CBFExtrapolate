@@ -1,48 +1,42 @@
 {
-	"geode": "5.8.2",
-	"gd": {
-		"win": "2.2081",
-		"mac": "2.2081",
-		"android": "2.2081",
-		"ios": "2.2081"
-	},
-	"id": "square3ang.cbfextrapolate",
-	"name": "CBF Extrapolate",
-	"version": "v2.2.13",
-	"developer": "square3ang",
-	"description": "Frame extrapolation for smoother rendering.",
-	"dependencies": {
-		"syzzi.click_between_frames": {
-			"version": ">=v1.0.5",
-			"required": false
-		}
-	},
-	"tags": [
-		"gameplay",
-		"enhancement",
-		"cheat"
-	],
-	"links": {
-		"source": "https://github.com/square3ang/CBFExtrapolate"
-	},
-	"settings": {
-		"soft-toggle": {
-			"name": "Soft Toggle",
-			"description": "Disables CBF Extrapolate features.",
-			"type": "bool",
-			"default": false
-		},
-		"stable-frames-mode": {
-			"name": "Stable Frames Mode",
-			"description": "Quantizes render-side extrapolation to more consistent quarter-frame timing for steadier high-speed pacing.",
-			"type": "bool",
-			"default": true
-		},
-		"debug-extrapolation": {
-			"name": "Debug Extrapolation",
-			"description": "Logs extrapolation timing, clamps, queued inputs, and reset skips for debugging frame pacing issues.",
-			"type": "bool",
-			"default": false
-		}
-	}
+  "geode": "5.8.2",
+  "gd": {
+    "win": "2.2081",
+    "mac": "2.2081",
+    "android": "2.2081",
+    "ios": "2.2081"
+  },
+  "id": "square3ang.cbfextrapolate",
+  "name": "CBF Extrapolate",
+  "version": "v2.2.13",
+  "developer": "square3ang",
+  "description": "Frame extrapolation for smoother rendering.",
+  "dependencies": {
+    "syzzi.click_between_frames": {
+      "version": ">=v1.0.5",
+      "required": false
+    }
+  },
+  "tags": [
+    "gameplay",
+    "enhancement",
+    "cheat"
+  ],
+  "links": {
+    "source": "https://github.com/square3ang/CBFExtrapolate"
+  },
+  "settings": {
+    "soft-toggle": {
+      "name": "Soft Toggle",
+      "description": "Disables CBF Extrapolate features.",
+      "type": "bool",
+      "default": false
+    },
+    "debug-extrapolation": {
+      "name": "Debug Extrapolation",
+      "description": "Logs extrapolation timing, clamps, queued inputs, and reset skips for debugging frame pacing issues.",
+      "type": "bool",
+      "default": false
+    }
+  }
 }
