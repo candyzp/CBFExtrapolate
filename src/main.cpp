@@ -1,4 +1,4 @@
-#include "bot/bot.hpp"
+ #include "bot/bot.hpp"
 #include "physics/collisions.hpp"
 #include "physics/gjbasegamelayer.hpp"
 #include "physics/player.hpp"
@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <vector>
 #include <stdexcept>
+#include <cmath>
 
 using namespace geode::prelude;
 
@@ -65,11 +66,25 @@ ExtrapolationData g_extrapData;
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
 static bool g_cbfSoftToggle = false;
+static bool g_debugExtrapolation = false;
+static bool g_stableFramesMode = true;
 
 $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
   listenForSettingChanges<bool>("soft-toggle",
                                 [](bool value) { g_softToggle = value; });
+
+  if (Mod::get()->hasSetting("debug-extrapolation")) {
+    g_debugExtrapolation = Mod::get()->getSettingValue<bool>("debug-extrapolation");
+    listenForSettingChanges<bool>("debug-extrapolation",
+                                  [](bool value) { g_debugExtrapolation = value; });
+  }
+
+  if (Mod::get()->hasSetting("stable-frames-mode")) {
+    g_stableFramesMode = Mod::get()->getSettingValue<bool>("stable-frames-mode");
+    listenForSettingChanges<bool>("stable-frames-mode",
+                                  [](bool value) { g_stableFramesMode = value; });
+  }
 
   if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
     g_cbfSoftToggle = m->getSettingValue<bool>("soft-toggle");
@@ -526,24 +541,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     player->m_lastPosition = state.lastPosition;
     player->m_lastPortalPos = state.lastPortalPos;
 
-    if (state.hasWaveTrail && player->m_waveTrail) {
-      player->m_waveTrail->m_currentPoint = state.waveTrailCurrentPoint;
-      auto *pointArray = player->m_waveTrail->m_pointArray;
-      if (pointArray) {
-        int count = pointArray->count();
-        if (count > state.waveTrailCount) {
-          int diff = count - state.waveTrailCount;
-          if (diff > 10 || count > 300) {
-            pointArray->removeAllObjects();
-          } else {
-            while (pointArray->count() > state.waveTrailCount) {
-              pointArray->removeLastObject();
-            }
-          }
-        }
-      }
-      player->m_waveTrail->updateStroke(0.f);
-    }
+
   }
 
   GroundState saveGroundState(GJGroundLayer *ground) {
@@ -881,6 +879,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     if (shouldSkipExtrapolationThisFrame()) {
+      if (g_debugExtrapolation) {
+        geode::log::debug("CBF stable skip extrapolation after reset");
+      }
       invalidateFakePlayersForReset();
       GJBaseGameLayer::visit();
       return;
@@ -944,14 +945,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     GroundState groundState1 = saveGroundState(m_groundLayer);
     GroundState groundState2 = saveGroundState(m_groundLayer2);
 
-    m_fields->m_savedGroundChildren1.clear();
-    m_fields->m_savedGroundChildren2.clear();
-    m_fields->m_savedGroundChildren1.reserve(64);
-    m_fields->m_savedGroundChildren2.reserve(64);
-
-    saveNodePositionsRecursive(m_groundLayer, m_fields->m_savedGroundChildren1);
-    saveNodePositionsRecursive(m_groundLayer2, m_fields->m_savedGroundChildren2);
-
     float origInShaderObjScaleX =
         m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
     float origInShaderObjScaleY =
@@ -994,6 +987,21 @@ class $modify(MyBGL, GJBaseGameLayer) {
           double dtSeconds = tCurrent - state.lastTime;
           if (dtSeconds < 0.0)
             dtSeconds = 0.0;
+
+          if (g_stableFramesMode) {
+            double referenceSeconds = 0.0;
+            if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+              referenceSeconds = state.lastTime - state.prevTime;
+            } else if (state.lastDt > 0.0001f && timeScale > 0.0001) {
+              referenceSeconds = state.lastDt / 60.0f / timeScale;
+            }
+
+            if (referenceSeconds > 0.0001) {
+              double normalizedFrames = (dtSeconds / referenceSeconds) * state.lastDt;
+              double quantizedFrames = std::round(normalizedFrames * 4.0) / 4.0;
+              dtSeconds = (quantizedFrames / std::max<double>(state.lastDt, 0.0001f)) * referenceSeconds;
+            }
+          }
 
           m_fields->m_sortedClicks = pendingClicks;
           if (g_cbfSoftToggle && m_clickBetweenSteps) {
@@ -1122,8 +1130,30 @@ class $modify(MyBGL, GJBaseGameLayer) {
                              ? (state.lastDt / 60.0f / timeScale)
                              : 0.033;
         }
+        if (g_stableFramesMode && state.lastDt > 0.0001f) {
+          double quantizedFrames = std::round((dtSeconds * timeScale * 60.0) * 4.0) / 4.0;
+          dtSeconds = quantizedFrames / 60.0 / std::max<double>(timeScale, 0.0001);
+        }
+        if (g_stableFramesMode && state.lastDt > 0.0001f) {
+          double quantizedFrames = std::round((dtSeconds * timeScale * 60.0) * 4.0) / 4.0;
+          dtSeconds = quantizedFrames / 60.0 / std::max<double>(timeScale, 0.0001);
+        }
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
         double tCurrentClamped = state.lastTime + dtSeconds;
+
+        if (g_debugExtrapolation && dtSeconds > 0.0) {
+          geode::log::debug(
+              "CBF stable p2 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} queued={}",
+              dtSeconds, maxDtSeconds, state.lastDt, timeScale,
+              static_cast<int>(m_fields->m_pendingClicks2.size()));
+        }
+
+        if (g_debugExtrapolation && dtSeconds > 0.0) {
+          geode::log::debug(
+              "CBF stable p1 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} queued={}",
+              dtSeconds, maxDtSeconds, state.lastDt, timeScale,
+              static_cast<int>(m_fields->m_pendingClicks1.size()));
+        }
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           m_fields->m_pendingClicks1.clear();
@@ -1279,8 +1309,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!m_fields->m_disableRestoreThisFrame) {
       restoreGroundState(m_groundLayer, groundState1);
       restoreGroundState(m_groundLayer2, groundState2);
-      restoreNodePositions(m_fields->m_savedGroundChildren1, m_groundLayer);
-      restoreNodePositions(m_fields->m_savedGroundChildren2, m_groundLayer2);
     }
 
     if (hasBg) {
@@ -1348,8 +1376,6 @@ class $modify(MyPlayLayer, PlayLayer) {
         myBgl->m_fields->m_skipFramesAfterReset = 2;
         myBgl->m_fields->m_disableRestoreThisFrame = true;
 
-        clearPlayerExtrapolationArtifacts(m_player1, true);
-        clearPlayerExtrapolationArtifacts(m_player2, true);
         detachFakePlayer(myBgl->m_fields->m_fakePlayer1);
         detachFakePlayer(myBgl->m_fields->m_fakePlayer2);
       }
