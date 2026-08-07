@@ -31,6 +31,18 @@
 			"description": "Disables CBF Extrapolate features.",
 			"type": "bool",
 			"default": false
+		},
+		"stable-frames-mode": {
+			"name": "Stable Frames Mode",
+			"description": "Quantizes render-side extrapolation to more consistent quarter-frame timing for steadier high-speed pacing.",
+			"type": "bool",
+			"default": true
+		},
+		"debug-extrapolation": {
+			"name": "Debug Extrapolation",
+			"description": "Logs extrapolation timing, clamps, queued inputs, and reset skips for debugging frame pacing issues.",
+			"type": "bool",
+			"default": false
 		}
 	}
 }
