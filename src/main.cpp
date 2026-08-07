@@ -701,7 +701,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       ground->setPositionX(state.x);
       ground->setPositionY(state.y);
       ground->setScaleX(state.scaleX);
-      ground->setScaleY(state.scaleY);
+      ground->setPositionScaleY(state.scaleY);
       ground->setRotation(state.rotation);
       ground->m_ground1Offset = state.offset;
       ground->m_unk1cc = state.unk;
@@ -933,7 +933,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
   void update(float dt) override {
     auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
     bool isPlatformer = (m_player1 && m_player1->m_isPlatformer) ||
-                        m_player2->m_isPlatformer);
+                        (m_player2 && m_player2->m_isPlatformer);
     if (g_softToggle || !playLayer || isPlatformer) {
       GJBaseGameLayer::update(dt);
       return;
