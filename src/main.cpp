@@ -1145,15 +1145,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           dtSeconds = visibleMinDtSeconds;
         }
         dtSeconds *= std::max(g_renderExtrapolationScale, 0.0f);
-        double visibleMinDtSeconds = 0.0;
-        if (state.lastDt > 0.0001f && timeScale > 0.0001) {
-          visibleMinDtSeconds =
-              (std::max(g_renderExtrapolationMinFrames, 0.0f) / 60.0) / timeScale;
-        }
-        if (dtSeconds > 0.0 && dtSeconds < visibleMinDtSeconds) {
-          dtSeconds = visibleMinDtSeconds;
-        }
-        dtSeconds *= std::max(g_renderExtrapolationScale, 0.0f);
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
         double tCurrentClamped = state.lastTime + dtSeconds;
 
