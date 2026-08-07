@@ -21,211 +21,17 @@
 #include <algorithm>
 #include <vector>
 #include <stdexcept>
-#include <cmath>
-#include <array>
 
 using namespace geode::prelude;
-
-std::vector<CCNode*> g_activeNodes;
-
-void addNodeOptimized(CCNode* node) {
-  if (!node) return;
-  if (g_activeNodes.size() > 2048) {
-    g_activeNodes.erase(g_activeNodes.begin(), g_activeNodes.begin() + 512);
-  }
-  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
-  if (it == g_activeNodes.end() || *it != node) {
-    g_activeNodes.insert(it, node);
-  }
-}
-
-bool hasNodeOptimized(CCNode* node) {
-  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
-  return it != g_activeNodes.end() && *it == node;
-}
-
-void removeNodeOptimized(CCNode* node) {
-  auto it = std::lower_bound(g_activeNodes.begin(), g_activeNodes.end(), node);
-  if (it != g_activeNodes.end() && *it == node) {
-    g_activeNodes.erase(it);
-  }
-}
-
-struct ExtrapolationData {
-  std::vector<CCPoint> trailPoints;
-  ExtrapolationData() {
-    trailPoints.reserve(1024);
-  }
-  void cleanup() {
-    trailPoints.clear();
-    g_activeNodes.clear();
-  }
-};
-
-ExtrapolationData g_extrapData;
 
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
 static bool g_cbfSoftToggle = false;
-static bool g_debugExtrapolation = false;
-static float g_renderExtrapolationScale = 1.35f;
-static float g_renderExtrapolationMinFrames = 0.35f;
-
-// Auto-adjust globals
-static bool g_autoAdjustExtrapolation = true;
-
-struct AutoTuningState {
-  std::array<double, 120> frameSamples{};
-  size_t sampleCount = 0;
-  size_t sampleIndex = 0;
-  float appliedScale = 1.15f;
-  float appliedMinFrames = 0.5f;
-  double lastAppliedTimestamp = 0.0;
-
-  void reset() {
-    frameSamples.fill(0.0);
-    sampleCount = 0;
-    sampleIndex = 0;
-    appliedScale = 1.15f;
-    appliedMinFrames = 0.5f;
-    lastAppliedTimestamp = 0.0;
-  }
-
-  void push(double dt) {
-    if (!(dt > 0.0) || dt > 0.2)
-      return;
-    frameSamples[sampleIndex] = dt;
-    sampleIndex = (sampleIndex + 1) % frameSamples.size();
-    if (sampleCount < frameSamples.size())
-      ++sampleCount;
-  }
-};
-
-static AutoTuningState g_autoTune;
-
-static void getActiveRenderTuning(float &scaleOut, float &minFramesOut) {
-  scaleOut = g_renderExtrapolationScale;
-  minFramesOut = g_renderExtrapolationMinFrames;
-  if (g_autoAdjustExtrapolation) {
-    scaleOut = g_autoTune.appliedScale;
-    minFramesOut = g_autoTune.appliedMinFrames;
-  }
-}
-
-static void updateAutoRenderTuning(double dtSeconds, double timeScale) {
-  if (!g_autoAdjustExtrapolation)
-    return;
-
-  g_autoTune.push(dtSeconds);
-  if (g_autoTune.sampleCount < 24)
-    return;
-
-  double now = getCurrentTimestamp();
-  if (g_autoTune.lastAppliedTimestamp > 0.0 && now - g_autoTune.lastAppliedTimestamp < 0.2)
-    return;
-
-  double sum = 0.0;
-  double minDt = 1e9;
-  double maxDt = 0.0;
-  for (size_t i = 0; i < g_autoTune.sampleCount; ++i) {
-    double v = g_autoTune.frameSamples[i];
-    if (!(v > 0.0))
-      continue;
-    sum += v;
-    if (v < minDt)
-      minDt = v;
-    if (v > maxDt)
-      maxDt = v;
-  }
-
-  double count = static_cast<double>(g_autoTune.sampleCount);
-  if (count <= 0.0 || minDt == 1e9)
-    return;
-
-  double avgDt = sum / count;
-  double variance = 0.0;
-  for (size_t i = 0; i < g_autoTune.sampleCount; ++i) {
-    double v = g_autoTune.frameSamples[i];
-    if (!(v > 0.0))
-      continue;
-    double d = v - avgDt;
-    variance += d * d;
-  }
-  variance /= count;
-  double stddev = std::sqrt(variance);
-  double jitter = avgDt > 0.0 ? stddev / avgDt : 0.0;
-  double spread = avgDt > 0.0 ? (maxDt - minDt) / avgDt : 0.0;
-  double fps = avgDt > 0.0 ? 1.0 / avgDt : 60.0;
-
-  float targetScale = 1.0f;
-  float targetMinFrames = 0.35f;
-
-  if (fps >= 110.0 && jitter < 0.05 && spread < 0.18) {
-    targetScale = 1.35f;
-    targetMinFrames = 0.60f;
-  } else if (fps >= 80.0 && jitter < 0.08 && spread < 0.24) {
-    targetScale = 1.20f;
-    targetMinFrames = 0.50f;
-  } else if (fps >= 55.0 && jitter < 0.12 && spread < 0.35) {
-    targetScale = 1.05f;
-    targetMinFrames = 0.35f;
-  } else {
-    targetScale = 0.90f;
-    targetMinFrames = 0.20f;
-  }
-
-  if (timeScale < 0.24) {
-    targetScale = std::min(targetScale, 1.05f);
-    targetMinFrames = std::min(targetMinFrames, 0.35f);
-  }
-
-  g_autoTune.appliedScale += (targetScale - g_autoTune.appliedScale) * 0.15f;
-  g_autoTune.appliedMinFrames += (targetMinFrames - g_autoTune.appliedMinFrames) * 0.15f;
-  g_autoTune.lastAppliedTimestamp = now;
-
-  if (g_debugExtrapolation) {
-    geode::log::debug(
-        "CBF auto tune fps={:.1f} jitter={:.4f} spread={:.4f} scale={:.2f} minFrames={:.2f}",
-        fps, jitter, spread, g_autoTune.appliedScale, g_autoTune.appliedMinFrames);
-  }
-}
 
 $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
   listenForSettingChanges<bool>("soft-toggle",
                                 [](bool value) { g_softToggle = value; });
-
-  if (Mod::get()->hasSetting("debug-extrapolation")) {
-    g_debugExtrapolation = Mod::get()->getSettingValue<bool>("debug-extrapolation");
-    listenForSettingChanges<bool>("debug-extrapolation",
-                                  [](bool value) { g_debugExtrapolation = value; });
-  }
-
-  if (Mod::get()->hasSetting("render-extrapolation-scale")) {
-    g_renderExtrapolationScale =
-        Mod::get()->getSettingValue<double>("render-extrapolation-scale");
-    listenForSettingChanges<double>(
-        "render-extrapolation-scale",
-        [](double value) { g_renderExtrapolationScale = static_cast<float>(value); });
-  }
-
-  if (Mod::get()->hasSetting("render-extrapolation-min-frames")) {
-    g_renderExtrapolationMinFrames =
-        Mod::get()->getSettingValue<double>("render-extrapolation-min-frames");
-    listenForSettingChanges<double>(
-        "render-extrapolation-min-frames",
-        [](double value) { g_renderExtrapolationMinFrames = static_cast<float>(value); });
-  }
-
-  if (Mod::get()->hasSetting("auto-adjust")) {
-    g_autoAdjustExtrapolation = Mod::get()->getSettingValue<bool>("auto-adjust");
-    listenForSettingChanges<bool>(
-        "auto-adjust", [](bool value) {
-          g_autoAdjustExtrapolation = value;
-          if (!value)
-            g_autoTune.reset();
-        });
-  }
 
   if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
     g_cbfSoftToggle = m->getSettingValue<bool>("soft-toggle");
@@ -616,6 +422,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     RenderPlayerState state;
     if (!player)
       return state;
+
     state.nodePos = player->getPosition();
     state.robPos = player->m_position;
     state.positionX = player->m_positionX;
@@ -680,6 +487,25 @@ class $modify(MyBGL, GJBaseGameLayer) {
     player->m_unmodifiedPositionY = state.unmodifiedPositionY;
     player->m_lastPosition = state.lastPosition;
     player->m_lastPortalPos = state.lastPortalPos;
+
+    if (state.hasWaveTrail && player->m_waveTrail) {
+      player->m_waveTrail->m_currentPoint = state.waveTrailCurrentPoint;
+      auto *pointArray = player->m_waveTrail->m_pointArray;
+      if (pointArray) {
+        int count = pointArray->count();
+        if (count > state.waveTrailCount) {
+          int diff = count - state.waveTrailCount;
+          if (diff > 10 || count > 300) {
+            pointArray->removeAllObjects();
+          } else {
+            while (pointArray->count() > state.waveTrailCount) {
+              pointArray->removeLastObject();
+            }
+          }
+        }
+      }
+      player->m_waveTrail->updateStroke(0.f);
+    }
   }
 
   GroundState saveGroundState(GJGroundLayer *ground) {
@@ -701,7 +527,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       ground->setPositionX(state.x);
       ground->setPositionY(state.y);
       ground->setScaleX(state.scaleX);
-      ground->setPositionScaleY(state.scaleY);
+      ground->setScaleY(state.scaleY);
       ground->setRotation(state.rotation);
       ground->m_ground1Offset = state.offset;
       ground->m_unk1cc = state.unk;
@@ -744,9 +570,18 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!node)
       return;
 
+    // iOS 27 stability: cocos2d's visit traversal can delete child nodes
+    // mid-frame (ground layer children during fade transitions in
+    // particular), and recursing into a half-dead node was a real crash
+    // source. retainCount() == 0 means the node is on its way out; skip it
+    // rather than touch it. (Previous build used getReferenceCount(), which
+    // doesn't exist on CCObject/CCNode in this cocos2d fork - retainCount()
+    // is the real method.)
     if (node != this && node->retainCount() == 0)
       return;
 
+    // Hard cap so a degenerate/very deep node tree can't blow up per-frame
+    // cost or recursion depth.
     if (saved.size() > 4096)
       return;
 
@@ -1008,9 +843,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     if (shouldSkipExtrapolationThisFrame()) {
-      if (g_debugExtrapolation) {
-        geode::log::debug("CBF extrapolate skip extrapolation after reset");
-      }
       invalidateFakePlayersForReset();
       GJBaseGameLayer::visit();
       return;
@@ -1151,7 +983,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
             double remaining = dtFrames;
-            double stepSize = 0.25;
+            // Adaptive: finer substeps at higher speed for more accurate
+            // extrapolated collision prediction. Floor raised to 0.125
+            // (max 2x the baseline 4 substeps/frame) instead of 0.05 (5x)
+            // to keep the extra per-frame cost bounded.
+            double speed = std::abs(static_cast<double>(player->getCurrentXVelocity())) +
+                           std::abs(player->m_yVelocity);
+            double stepSize = std::clamp(2.5 / std::max(speed, 1.0), 0.125, 0.25);
 
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
@@ -1252,30 +1090,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
                              ? (state.lastDt / 60.0f / timeScale)
                              : 0.033;
         }
-
-        updateAutoRenderTuning(maxDtSeconds, timeScale);
-        float activeScale = g_renderExtrapolationScale;
-        float activeMinFrames = g_renderExtrapolationMinFrames;
-        getActiveRenderTuning(activeScale, activeMinFrames);
-
-        double visibleMinDtSeconds = 0.0;
-        if (state.lastDt > 0.0001f && timeScale > 0.0001) {
-          visibleMinDtSeconds =
-              (std::max(activeMinFrames, 0.0f) / 60.0) / timeScale;
-        }
-        if (dtSeconds > 0.0 && dtSeconds < visibleMinDtSeconds) {
-          dtSeconds = visibleMinDtSeconds;
-        }
-        dtSeconds *= std::max(activeScale, 0.0f);
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
         double tCurrentClamped = state.lastTime + dtSeconds;
-
-        if (g_debugExtrapolation && dtSeconds > 0.0) {
-          geode::log::debug(
-              "CBF extrapolate p1 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} scale={:.2f} minFrames={:.2f}",
-              dtSeconds, maxDtSeconds, state.lastDt, timeScale,
-              activeScale, activeMinFrames);
-        }
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           m_fields->m_pendingClicks1.clear();
@@ -1327,20 +1143,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
                              ? (state.lastDt / 60.0f / timeScale)
                              : 0.033;
         }
-
-        float activeScale = g_renderExtrapolationScale;
-        float activeMinFrames = g_renderExtrapolationMinFrames;
-        getActiveRenderTuning(activeScale, activeMinFrames);
-
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
         double tCurrentClamped = state.lastTime + dtSeconds;
-
-        if (g_debugExtrapolation && dtSeconds > 0.0) {
-          geode::log::debug(
-              "CBF extrapolate p2 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} scale={:.2f} minFrames={:.2f}",
-              dtSeconds, maxDtSeconds, state.lastDt, timeScale,
-              activeScale, activeMinFrames);
-        }
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           m_fields->m_pendingClicks2.clear();
@@ -1396,20 +1200,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
                            ? (m_fields->p1.lastDt / 60.0f / timeScale)
                            : 0.033;
       }
-
-      float activeScale = g_renderExtrapolationScale;
-      float activeMinFrames = g_renderExtrapolationMinFrames;
-      getActiveRenderTuning(activeScale, activeMinFrames);
-
-      double visibleMinDtSeconds = 0.0;
-      if (m_fields->p1.lastDt > 0.0001f && timeScale > 0.0001) {
-        visibleMinDtSeconds =
-            (std::max(activeMinFrames, 0.0f) / 60.0) / timeScale;
-      }
-      if (dtSeconds > 0.0 && dtSeconds < visibleMinDtSeconds) {
-        dtSeconds = visibleMinDtSeconds;
-      }
-      dtSeconds *= std::max(activeScale, 0.0f);
       if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
@@ -1509,8 +1299,6 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     try {
       g_extrapolating = false;
-      g_extrapData.cleanup();
-      g_autoTune.reset();
 
       if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this))) {
         myBgl->m_fields->p1 = PlayerState{};
@@ -1527,6 +1315,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         myBgl->m_fields->m_skipFramesAfterReset = 2;
         myBgl->m_fields->m_disableRestoreThisFrame = true;
 
+        clearPlayerExtrapolationArtifacts(m_player1, true);
+        clearPlayerExtrapolationArtifacts(m_player2, true);
         detachFakePlayer(myBgl->m_fields->m_fakePlayer1);
         detachFakePlayer(myBgl->m_fields->m_fakePlayer2);
       }
@@ -1548,8 +1338,6 @@ class $modify(CBFEditorLayer, LevelEditorLayer) {
 
     try {
       g_extrapolating = false;
-      g_extrapData.cleanup();
-      g_autoTune.reset();
 
       if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this))) {
         myBgl->m_fields->p1 = PlayerState{};
