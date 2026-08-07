@@ -67,7 +67,8 @@ static bool g_softToggle = false;
 static bool g_extrapolating = false;
 static bool g_cbfSoftToggle = false;
 static bool g_debugExtrapolation = false;
-static bool g_stableFramesMode = true;
+static float g_renderExtrapolationScale = 1.35f;
+static float g_renderExtrapolationMinFrames = 0.35f;
 
 $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
@@ -80,10 +81,21 @@ $on_mod(Loaded) {
                                   [](bool value) { g_debugExtrapolation = value; });
   }
 
-  if (Mod::get()->hasSetting("stable-frames-mode")) {
-    g_stableFramesMode = Mod::get()->getSettingValue<bool>("stable-frames-mode");
-    listenForSettingChanges<bool>("stable-frames-mode",
-                                  [](bool value) { g_stableFramesMode = value; });
+
+  if (Mod::get()->hasSetting("render-extrapolation-scale")) {
+    g_renderExtrapolationScale =
+        Mod::get()->getSettingValue<double>("render-extrapolation-scale");
+    listenForSettingChanges<double>(
+        "render-extrapolation-scale",
+        [](double value) { g_renderExtrapolationScale = static_cast<float>(value); });
+  }
+
+  if (Mod::get()->hasSetting("render-extrapolation-min-frames")) {
+    g_renderExtrapolationMinFrames =
+        Mod::get()->getSettingValue<double>("render-extrapolation-min-frames");
+    listenForSettingChanges<double>(
+        "render-extrapolation-min-frames",
+        [](double value) { g_renderExtrapolationMinFrames = static_cast<float>(value); });
   }
 
   if (auto m = Loader::get()->getLoadedMod("syzzi.click_between_frames")) {
@@ -880,7 +892,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (shouldSkipExtrapolationThisFrame()) {
       if (g_debugExtrapolation) {
-        geode::log::debug("CBF stable skip extrapolation after reset");
+        geode::log::debug("CBF extrapolate skip extrapolation after reset");
       }
       invalidateFakePlayersForReset();
       GJBaseGameLayer::visit();
@@ -945,6 +957,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
     GroundState groundState1 = saveGroundState(m_groundLayer);
     GroundState groundState2 = saveGroundState(m_groundLayer2);
 
+    m_fields->m_savedGroundChildren1.clear();
+    m_fields->m_savedGroundChildren2.clear();
+    m_fields->m_savedGroundChildren1.reserve(64);
+    m_fields->m_savedGroundChildren2.reserve(64);
+
+    saveNodePositionsRecursive(m_groundLayer, m_fields->m_savedGroundChildren1);
+    saveNodePositionsRecursive(m_groundLayer2, m_fields->m_savedGroundChildren2);
+
     float origInShaderObjScaleX =
         m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
     float origInShaderObjScaleY =
@@ -988,20 +1008,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
           if (dtSeconds < 0.0)
             dtSeconds = 0.0;
 
-          if (g_stableFramesMode) {
-            double referenceSeconds = 0.0;
-            if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-              referenceSeconds = state.lastTime - state.prevTime;
-            } else if (state.lastDt > 0.0001f && timeScale > 0.0001) {
-              referenceSeconds = state.lastDt / 60.0f / timeScale;
-            }
-
-            if (referenceSeconds > 0.0001) {
-              double normalizedFrames = (dtSeconds / referenceSeconds) * state.lastDt;
-              double quantizedFrames = std::round(normalizedFrames * 4.0) / 4.0;
-              dtSeconds = (quantizedFrames / std::max<double>(state.lastDt, 0.0001f)) * referenceSeconds;
-            }
-          }
 
           m_fields->m_sortedClicks = pendingClicks;
           if (g_cbfSoftToggle && m_clickBetweenSteps) {
@@ -1130,29 +1136,32 @@ class $modify(MyBGL, GJBaseGameLayer) {
                              ? (state.lastDt / 60.0f / timeScale)
                              : 0.033;
         }
-        if (g_stableFramesMode && state.lastDt > 0.0001f) {
-          double quantizedFrames = std::round((dtSeconds * timeScale * 60.0) * 4.0) / 4.0;
-          dtSeconds = quantizedFrames / 60.0 / std::max<double>(timeScale, 0.0001);
+        double visibleMinDtSeconds = 0.0;
+        if (state.lastDt > 0.0001f && timeScale > 0.0001) {
+          visibleMinDtSeconds =
+              (std::max(g_renderExtrapolationMinFrames, 0.0f) / 60.0) / timeScale;
         }
-        if (g_stableFramesMode && state.lastDt > 0.0001f) {
-          double quantizedFrames = std::round((dtSeconds * timeScale * 60.0) * 4.0) / 4.0;
-          dtSeconds = quantizedFrames / 60.0 / std::max<double>(timeScale, 0.0001);
+        if (dtSeconds > 0.0 && dtSeconds < visibleMinDtSeconds) {
+          dtSeconds = visibleMinDtSeconds;
         }
+        dtSeconds *= std::max(g_renderExtrapolationScale, 0.0f);
+        double visibleMinDtSeconds = 0.0;
+        if (state.lastDt > 0.0001f && timeScale > 0.0001) {
+          visibleMinDtSeconds =
+              (std::max(g_renderExtrapolationMinFrames, 0.0f) / 60.0) / timeScale;
+        }
+        if (dtSeconds > 0.0 && dtSeconds < visibleMinDtSeconds) {
+          dtSeconds = visibleMinDtSeconds;
+        }
+        dtSeconds *= std::max(g_renderExtrapolationScale, 0.0f);
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
         double tCurrentClamped = state.lastTime + dtSeconds;
 
         if (g_debugExtrapolation && dtSeconds > 0.0) {
           geode::log::debug(
-              "CBF stable p2 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} queued={}",
+              "CBF extrapolate p1 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} scale={:.2f} minFrames={:.2f}",
               dtSeconds, maxDtSeconds, state.lastDt, timeScale,
-              static_cast<int>(m_fields->m_pendingClicks2.size()));
-        }
-
-        if (g_debugExtrapolation && dtSeconds > 0.0) {
-          geode::log::debug(
-              "CBF stable p1 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} queued={}",
-              dtSeconds, maxDtSeconds, state.lastDt, timeScale,
-              static_cast<int>(m_fields->m_pendingClicks1.size()));
+              g_renderExtrapolationScale, g_renderExtrapolationMinFrames);
         }
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
@@ -1208,6 +1217,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
         double tCurrentClamped = state.lastTime + dtSeconds;
 
+        if (g_debugExtrapolation && dtSeconds > 0.0) {
+          geode::log::debug(
+              "CBF extrapolate p2 dtSeconds={:.6f} maxDtSeconds={:.6f} lastDt={:.3f} timeScale={:.4f} scale={:.2f} minFrames={:.2f}",
+              dtSeconds, maxDtSeconds, state.lastDt, timeScale,
+              g_renderExtrapolationScale, g_renderExtrapolationMinFrames);
+        }
+
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           m_fields->m_pendingClicks2.clear();
           if (hasCBF) {
@@ -1262,6 +1278,15 @@ class $modify(MyBGL, GJBaseGameLayer) {
                            ? (m_fields->p1.lastDt / 60.0f / timeScale)
                            : 0.033;
       }
+      double visibleMinDtSeconds = 0.0;
+      if (m_fields->p1.lastDt > 0.0001f && timeScale > 0.0001) {
+        visibleMinDtSeconds =
+            (std::max(g_renderExtrapolationMinFrames, 0.0f) / 60.0) / timeScale;
+      }
+      if (dtSeconds > 0.0 && dtSeconds < visibleMinDtSeconds) {
+        dtSeconds = visibleMinDtSeconds;
+      }
+      dtSeconds *= std::max(g_renderExtrapolationScale, 0.0f);
       if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
@@ -1309,6 +1334,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!m_fields->m_disableRestoreThisFrame) {
       restoreGroundState(m_groundLayer, groundState1);
       restoreGroundState(m_groundLayer2, groundState2);
+      restoreNodePositions(m_fields->m_savedGroundChildren1, m_groundLayer);
+      restoreNodePositions(m_fields->m_savedGroundChildren2, m_groundLayer2);
     }
 
     if (hasBg) {
