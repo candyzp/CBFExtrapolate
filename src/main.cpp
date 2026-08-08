@@ -621,10 +621,59 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
+  // Walks the tree in the exact same order saveNodePositionsRecursive did
+  // and checks every node against the saved sequence, position for
+  // position. Returns false the instant anything doesn't line up - a
+  // node missing, a different node, extra children, anything. It can
+  // only be MORE cautious than the validated path below, never less:
+  // any real structural change (or a node that got filtered out at save
+  // time) forces a false here, which sends restoreNodePositions to the
+  // exact same rebuild-and-validate path it already used before this
+  // change existed.
+  bool positionsUnchangedRecursive(cocos2d::CCNode *node,
+                                   const std::vector<SavedNodeState> &saved,
+                                   size_t &index) {
+    if (index >= saved.size() || saved[index].node != node)
+      return false;
+    ++index;
+
+    if (node->getChildren()) {
+      for (auto *child :
+           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
+        if (!child)
+          return false;
+        if (!positionsUnchangedRecursive(child, saved, index))
+          return false;
+      }
+    }
+    return true;
+  }
+
   void restoreNodePositions(const std::vector<SavedNodeState> &saved,
                             cocos2d::CCNode *root) {
     if (!root)
       return;
+
+    // Fast path: on the overwhelming majority of frames nothing was
+    // actually added, removed, or reordered under root during
+    // GJBaseGameLayer::visit(). Prove that cheaply with one comparison
+    // walk (no allocation, no sort) instead of paying for a full
+    // rebuild + sort + per-node binary search just to re-confirm what's
+    // almost always already true. Any doubt at all falls through to the
+    // original validated path untouched below.
+    size_t matchedCount = 0;
+    if (positionsUnchangedRecursive(root, saved, matchedCount) &&
+        matchedCount == saved.size()) {
+      for (const auto &state : saved) {
+        state.node->setPosition(state.position);
+        state.node->setRotation(state.rotation);
+        state.node->setScaleX(state.scaleX);
+        state.node->setScaleY(state.scaleY);
+        state.node->setVisible(state.visible);
+        restoreRGBAState(state.node, state);
+      }
+      return;
+    }
 
     m_fields->m_aliveNodes.clear();
     m_fields->m_aliveNodes.reserve(saved.size());
@@ -983,13 +1032,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
             double remaining = dtFrames;
-            // Adaptive: finer substeps at higher speed for more accurate
-            // extrapolated collision prediction. Floor raised to 0.125
-            // (max 2x the baseline 4 substeps/frame) instead of 0.05 (5x)
-            // to keep the extra per-frame cost bounded.
-            double speed = std::abs(static_cast<double>(player->getCurrentXVelocity())) +
-                           std::abs(player->m_yVelocity);
-            double stepSize = std::clamp(2.5 / std::max(speed, 1.0), 0.125, 0.25);
+            double stepSize = 0.25;
 
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
