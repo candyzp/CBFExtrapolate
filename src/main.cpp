@@ -1596,7 +1596,29 @@ class $modify(MyPlayer, PlayerObject) {
     m_fields->lastBlurPos = currentPos;
     m_fields->hasLastBlurPos = true;
 
-    CCSprite *primary = this->m_mainSprite;
+    // Find the primary visible sprite. m_mainSprite is on the GameObject
+    // base but is not exposed by the Geode binding for PlayerObject, so we
+    // walk children and pick the largest visible CCSprite — that's the
+    // icon (cube mode) or vehicle (ship/ball/UFO/etc.) and works across
+    // every game mode without hardcoding member names.
+    CCSprite *primary = nullptr;
+    float maxArea = 0.f;
+    if (this->getChildren()) {
+      for (auto *child :
+           geode::cocos::CCArrayExt<cocos2d::CCNode *>(this->getChildren())) {
+        if (!child || !child->isVisible())
+          continue;
+        auto *sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite *>(child);
+        if (!sprite)
+          continue;
+        cocos2d::CCSize size = sprite->getScaledContentSize();
+        float area = size.width * size.height;
+        if (area > maxArea) {
+          maxArea = area;
+          primary = sprite;
+        }
+      }
+    }
     if (!primary) {
       for (auto *g : m_fields->blurGhosts) {
         if (g)
