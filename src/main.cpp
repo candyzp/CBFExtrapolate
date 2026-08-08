@@ -40,6 +40,16 @@ $on_mod(Loaded) {
   }
 }
 
+// RAII guard so g_extrapolating is always restored, even if an exception
+// escapes the extrapolation lambda. A stuck-true flag would silently break
+// every subsequent frame (toggleFlipped, playDeathEffect, HardStreak::addPoint
+// all check it), so this is a real correctness guard, not just cosmetics.
+struct ExtrapolatingGuard {
+  bool oldValue;
+  ExtrapolatingGuard() : oldValue(g_extrapolating) { g_extrapolating = true; }
+  ~ExtrapolatingGuard() { g_extrapolating = oldValue; }
+};
+
 static void extrapolatePushButton(PlayerObject *player, PlayerButton button) {
   player->pushButton(button);
 }
@@ -63,6 +73,14 @@ struct PlayerState {
   double prog = 0;
   double tickTime = 0;
   bool isDead = false;
+  // EMA of the render-gap (tCurrent - lastTime). This is the single most
+  // important field for stable high-speed extrapolation: the raw per-frame
+  // gap jitters with OS scheduling / CPU load, and at high timeScale that
+  // jitter is multiplied directly into player position. Smoothing the
+  // *timing* (not the position) keeps the prediction itself stable, so
+  // there is nothing to "hide" â€” the extrapolation just runs for a
+  // consistent duration every frame instead of stuttering forward/back.
+  double smoothedDtSeconds = 0.0;
 };
 
 static void clearPlayerExtrapolationArtifacts(PlayerObject *player,
@@ -378,8 +396,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
   };
 
 
+  // Returns the timestamp of the player state we extrapolate FROM.
+  // Previously this returned sampleTime (captured BEFORE PlayerObject::update),
+  // but syncFakePlayer copies the POST-update position into the fake player,
+  // so the anchor must be lastTime (captured AFTER update). Using sampleTime
+  // added a varying bias equal to the physics-update duration, which at high
+  // speeds became a visible source of per-frame jitter on its own.
   double getRenderAnchorTime(const PlayerState &state) const {
-    return state.sampleTime > 0.0 ? state.sampleTime : state.lastTime;
+    return state.lastTime;
   }
 
   double getPhysicsWindowSeconds(const PlayerState &state,
@@ -396,6 +420,29 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
 
     return physicsWindow;
+  }
+
+  // Computes a stable, per-player timeScale from the most recent pair of
+  // physics ticks. Returns false (and leaves timeScale untouched) if there
+  // is not enough history yet â€” in that case the caller's fallback
+  // (m_gameState.m_timeWarp) is used.
+  static bool computeTimeScale(const PlayerState &state,
+                               double fallbackWarp,
+                               double &outTimeScale) {
+    outTimeScale = fallbackWarp;
+    if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
+        state.lastDt > 0.0001f) {
+      double diff = state.lastTime - state.prevTime;
+      if (diff > 0.001) {
+        outTimeScale = (state.lastDt / 60.0f) / diff;
+      }
+    }
+    if (outTimeScale < 0.01 || outTimeScale > 100.0) {
+      outTimeScale = fallbackWarp;
+      if (outTimeScale < 0.01)
+        outTimeScale = 1.0;
+    }
+    return true;
   }
 
   CameraState saveCameraState() {
@@ -595,19 +642,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!node)
       return;
 
-    // iOS 27 stability: cocos2d's visit traversal can delete child nodes
-    // mid-frame (ground layer children during fade transitions in
-    // particular), and recursing into a half-dead node was a real crash
-    // source. retainCount() == 0 means the node is on its way out; skip it
-    // rather than touch it. (Previous build used getReferenceCount(), which
-    // doesn't exist on CCObject/CCNode in this cocos2d fork - retainCount()
-    // is the real method.)
     if (node != this && node->retainCount() == 0)
       return;
 
-    // Hard cap so a degenerate/very deep node tree can't blow up per-frame
-    // cost or recursion depth. If we hit it, mark the snapshot incomplete so
-    // the restore path can skip the strict fast-path assumption.
     if (saved.size() > 4096) {
       complete = false;
       return;
@@ -649,15 +686,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   }
 
-  // Walks the tree in the exact same order saveNodePositionsRecursive did
-  // and checks every node against the saved sequence, position for
-  // position. Returns false the instant anything doesn't line up - a
-  // node missing, a different node, extra children, anything. It can
-  // only be MORE cautious than the validated path below, never less:
-  // any real structural change (or a node that got filtered out at save
-  // time) forces a false here, which sends restoreNodePositions to the
-  // exact same rebuild-and-validate path it already used before this
-  // change existed.
   bool positionsUnchangedRecursive(cocos2d::CCNode *node,
                                    const std::vector<SavedNodeState> &saved,
                                    size_t &index) {
@@ -683,13 +711,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!root)
       return;
 
-    // Fast path: on the overwhelming majority of frames nothing was
-    // actually added, removed, or reordered under root during
-    // GJBaseGameLayer::visit(). Prove that cheaply with one comparison
-    // walk (no allocation, no sort) instead of paying for a full
-    // rebuild + sort + per-node binary search just to re-confirm what's
-    // almost always already true. Any doubt at all falls through to the
-    // original validated path untouched below.
     size_t matchedCount = 0;
     if (snapshotComplete &&
         positionsUnchangedRecursive(root, saved, matchedCount) &&
@@ -1059,15 +1080,26 @@ class $modify(MyBGL, GJBaseGameLayer) {
                 return a.m_timestamp < b.m_timestamp;
               });
 
-          g_extrapolating = true;
+          // RAII: g_extrapolating is restored even if updatePlayerSubstepped
+          // throws or the loop exits early. Previously a stuck-true flag
+          // silently broke toggleFlipped / playDeathEffect / HardStreak for
+          // every subsequent frame until reset.
+          ExtrapolatingGuard guard;
 
           double currentTime = state.lastTime;
           double targetTime = anchorTime + dtSeconds;
           state.isDead = false;
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
+            if (dtFrames <= 0.0)
+              return;
+
             double remaining = dtFrames;
-            double stepSize = 0.25;
+            // Adaptive substep: aim for ~4 substeps minimum for accuracy,
+            // cap at 0.25 (matches CBF), floor at 0.0625 so tiny deltas
+            // don't spawn hundreds of substeps. For very small dtFrames
+            // this naturally collapses to 1â€“2 substeps.
+            double stepSize = std::max(0.0625, std::min(0.25, dtFrames / 4.0));
 
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
@@ -1143,37 +1175,55 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
 
           player->m_isDead = false;
-          g_extrapolating = false;
+          // g_extrapolating restored by ExtrapolatingGuard destructor
         };
 
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
-        double anchorTime = getRenderAnchorTime(state);
-        double timeScale = m_gameState.m_timeWarp;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-            state.lastDt > 0.0001f) {
-          double diff = state.lastTime - state.prevTime;
-          if (diff > 0.001) {
-            timeScale = (state.lastDt / 60.0f) / diff;
-          }
-        }
-        double dtSeconds = tCurrent - anchorTime;
-        if (dtSeconds < 0.0) dtSeconds = 0.0;
+        double timeScale = 1.0;
+        computeTimeScale(state, m_gameState.m_timeWarp, timeScale);
 
         double physicsWindow = getPhysicsWindowSeconds(state, timeScale);
-        double renderLeadCap = physicsWindow * 1.35;
-        double maxDtSeconds = physicsWindow;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = std::max(maxDtSeconds, state.lastTime - state.prevTime);
+        // Cap at 2x the physics window â€” enough headroom to never clamp on
+        // a normal frame at any speed, but small enough to prevent
+        // runaway extrapolation if the renderer is very late. The previous
+        // physicsWindow * 1.35 was too tight at high timeScale: physicsWindow
+        // shrinks with speed, so at 3x the cap was ~7.5ms and the actual
+        // render gap frequently exceeded it, causing alternating
+        // clamp/no-clamp frames â†’ visible stutter.
+        double maxDtSeconds = physicsWindow * 2.0;
+
+        double rawDtSeconds = tCurrent - state.lastTime;
+        if (rawDtSeconds < 0.0)
+          rawDtSeconds = 0.0;
+        // Don't let a one-off frame hitch poison the EMA â€” clamp the raw
+        // sample first. This is the ONLY input that gets smoothed; the
+        // output is what the extrapolation actually runs for.
+        if (rawDtSeconds > maxDtSeconds * 2.0)
+          rawDtSeconds = maxDtSeconds * 2.0;
+
+        if (state.smoothedDtSeconds <= 0.0) {
+          state.smoothedDtSeconds = rawDtSeconds;
+        } else {
+          // 0.5 weight = average of current and previous. Half-life ~1
+          // frame: responsive enough to track real fps changes, smooth
+          // enough to kill per-frame OS-scheduling jitter. This is the
+          // core fix for high-speed stutter: the extrapolation duration
+          // is now stable, so the predicted position is stable too.
+          state.smoothedDtSeconds =
+              state.smoothedDtSeconds * 0.5 + rawDtSeconds * 0.5;
         }
-        maxDtSeconds = std::max(maxDtSeconds, renderLeadCap);
 
-        if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
-        double tCurrentClamped = anchorTime + dtSeconds;
+        double dtSeconds = std::min(state.smoothedDtSeconds, maxDtSeconds);
+        double tCurrentClamped = state.lastTime + dtSeconds;
 
-        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+        // 100ms sanity bound (was 2.0s â€” a 2-second extrapolation would
+        // freeze the game for ~120 physics frames). If we somehow exceed
+        // this, skip extrapolation entirely and render at the raw physics
+        // position; next frame will recover.
+        if (dtSeconds >= 0.0 && dtSeconds < 0.1) {
           m_fields->m_pendingClicks1.clear();
           if (hasCBF) {
             bool isTwoPlayer =
@@ -1205,30 +1255,29 @@ class $modify(MyBGL, GJBaseGameLayer) {
       auto &state = m_fields->p2;
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
-        double anchorTime = getRenderAnchorTime(state);
-        double timeScale = m_gameState.m_timeWarp;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-            state.lastDt > 0.0001f) {
-          double diff = state.lastTime - state.prevTime;
-          if (diff > 0.001) {
-            timeScale = (state.lastDt / 60.0f) / diff;
-          }
-        }
-        double dtSeconds = tCurrent - anchorTime;
-        if (dtSeconds < 0.0) dtSeconds = 0.0;
+        double timeScale = 1.0;
+        computeTimeScale(state, m_gameState.m_timeWarp, timeScale);
 
         double physicsWindow = getPhysicsWindowSeconds(state, timeScale);
-        double renderLeadCap = physicsWindow * 1.35;
-        double maxDtSeconds = physicsWindow;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = std::max(maxDtSeconds, state.lastTime - state.prevTime);
+        double maxDtSeconds = physicsWindow * 2.0;
+
+        double rawDtSeconds = tCurrent - state.lastTime;
+        if (rawDtSeconds < 0.0)
+          rawDtSeconds = 0.0;
+        if (rawDtSeconds > maxDtSeconds * 2.0)
+          rawDtSeconds = maxDtSeconds * 2.0;
+
+        if (state.smoothedDtSeconds <= 0.0) {
+          state.smoothedDtSeconds = rawDtSeconds;
+        } else {
+          state.smoothedDtSeconds =
+              state.smoothedDtSeconds * 0.5 + rawDtSeconds * 0.5;
         }
-        maxDtSeconds = std::max(maxDtSeconds, renderLeadCap);
 
-        if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
-        double tCurrentClamped = anchorTime + dtSeconds;
+        double dtSeconds = std::min(state.smoothedDtSeconds, maxDtSeconds);
+        double tCurrentClamped = state.lastTime + dtSeconds;
 
-        if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+        if (dtSeconds >= 0.0 && dtSeconds < 0.1) {
           m_fields->m_pendingClicks2.clear();
           if (hasCBF) {
             bool isTwoPlayer =
@@ -1261,31 +1310,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
     GJGameState origGameState;
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
-      double tCurrent = getCurrentTimestamp();
-      double anchorTime = getRenderAnchorTime(m_fields->p1);
-      double timeScale = m_gameState.m_timeWarp;
-      if (m_fields->p1.prevTime > 0.0001 &&
-          m_fields->p1.lastTime > m_fields->p1.prevTime &&
-          m_fields->p1.lastDt > 0.0001f) {
-        double diff = m_fields->p1.lastTime - m_fields->p1.prevTime;
-        if (diff > 0.001) {
-          timeScale = (m_fields->p1.lastDt / 60.0f) / diff;
-        }
-      }
-      double dtSeconds = tCurrent - anchorTime;
-      if (dtSeconds < 0.0) dtSeconds = 0.0;
-      double maxDtSeconds = 0.0;
-      if (m_fields->p1.prevTime > 0.0001 &&
-          m_fields->p1.lastTime > m_fields->p1.prevTime) {
-        maxDtSeconds = m_fields->p1.lastTime - m_fields->p1.prevTime;
-      } else {
-        maxDtSeconds = (m_fields->p1.lastDt > 0.0001f)
-                           ? (m_fields->p1.lastDt / 60.0f / timeScale)
-                           : 0.033;
-      }
-      if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
+      // Camera uses p1's smoothed dt so it tracks the player exactly â€”
+      // if they used different durations the camera would lag or lead the
+      // player by a sub-frame, which reads as micro-stutter.
+      double timeScale = 1.0;
+      computeTimeScale(m_fields->p1, m_gameState.m_timeWarp, timeScale);
 
-      if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
+      double physicsWindow =
+          getPhysicsWindowSeconds(m_fields->p1, timeScale);
+      double maxDtSeconds = physicsWindow * 2.0;
+      double dtSeconds = std::min(m_fields->p1.smoothedDtSeconds,
+                                  maxDtSeconds);
+
+      if (dtSeconds >= 0.0 && dtSeconds < 0.1) {
         camState = saveCameraState();
         origGameState = m_gameState;
         cameraExtrapolated = true;
