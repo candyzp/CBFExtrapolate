@@ -54,6 +54,7 @@ struct PlayerState {
   CCPoint lastVel = {0, 0};
   CCPoint prevVel = {0, 0};
   float lastRot = 0;
+  double sampleTime = 0;
   double lastTime = 0;
   double prevTime = 0;
   float lastDt = 0;
@@ -363,6 +364,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     std::vector<SavedNodeState> m_savedGroundChildren1;
     std::vector<SavedNodeState> m_savedGroundChildren2;
     std::vector<cocos2d::CCNode *> m_aliveNodes;
+    bool m_savedGroundChildren1Complete = true;
+    bool m_savedGroundChildren2Complete = true;
     bool m_resetPending = false;
     int m_skipFramesAfterReset = 0;
     bool m_disableRestoreThisFrame = false;
@@ -373,6 +376,27 @@ class $modify(MyBGL, GJBaseGameLayer) {
       cleanUpFakePlayer(m_fakePlayer2);
     }
   };
+
+
+  double getRenderAnchorTime(const PlayerState &state) const {
+    return state.sampleTime > 0.0 ? state.sampleTime : state.lastTime;
+  }
+
+  double getPhysicsWindowSeconds(const PlayerState &state,
+                                 double timeScale) const {
+    double physicsWindow = 0.033;
+    if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
+      physicsWindow = state.lastTime - state.prevTime;
+    } else if (state.lastDt > 0.0001f && timeScale > 0.0001) {
+      physicsWindow = (state.lastDt / 60.0f) / timeScale;
+    }
+
+    if (physicsWindow < 0.0) {
+      physicsWindow = 0.0;
+    }
+
+    return physicsWindow;
+  }
 
   CameraState saveCameraState() {
     CameraState state;
@@ -566,7 +590,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void saveNodePositionsRecursive(cocos2d::CCNode *node,
-                                  std::vector<SavedNodeState> &saved) {
+                                  std::vector<SavedNodeState> &saved,
+                                  bool &complete) {
     if (!node)
       return;
 
@@ -581,9 +606,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
 
     // Hard cap so a degenerate/very deep node tree can't blow up per-frame
-    // cost or recursion depth.
-    if (saved.size() > 4096)
+    // cost or recursion depth. If we hit it, mark the snapshot incomplete so
+    // the restore path can skip the strict fast-path assumption.
+    if (saved.size() > 4096) {
+      complete = false;
       return;
+    }
 
     SavedNodeState state;
     state.node = node;
@@ -601,7 +629,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
            geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
         if (!child)
           continue;
-        saveNodePositionsRecursive(child, saved);
+        saveNodePositionsRecursive(child, saved, complete);
       }
     }
   }
@@ -650,7 +678,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void restoreNodePositions(const std::vector<SavedNodeState> &saved,
-                            cocos2d::CCNode *root) {
+                            cocos2d::CCNode *root,
+                            bool snapshotComplete) {
     if (!root)
       return;
 
@@ -662,7 +691,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     // almost always already true. Any doubt at all falls through to the
     // original validated path untouched below.
     size_t matchedCount = 0;
-    if (positionsUnchangedRecursive(root, saved, matchedCount) &&
+    if (snapshotComplete &&
+        positionsUnchangedRecursive(root, saved, matchedCount) &&
         matchedCount == saved.size()) {
       for (const auto &state : saved) {
         state.node->setPosition(state.position);
@@ -959,9 +989,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
     m_fields->m_savedGroundChildren2.clear();
     m_fields->m_savedGroundChildren1.reserve(64);
     m_fields->m_savedGroundChildren2.reserve(64);
+    m_fields->m_savedGroundChildren1Complete = true;
+    m_fields->m_savedGroundChildren2Complete = true;
 
-    saveNodePositionsRecursive(m_groundLayer, m_fields->m_savedGroundChildren1);
-    saveNodePositionsRecursive(m_groundLayer2, m_fields->m_savedGroundChildren2);
+    saveNodePositionsRecursive(m_groundLayer, m_fields->m_savedGroundChildren1,
+                               m_fields->m_savedGroundChildren1Complete);
+    saveNodePositionsRecursive(m_groundLayer2, m_fields->m_savedGroundChildren2,
+                               m_fields->m_savedGroundChildren2Complete);
 
     float origInShaderObjScaleX =
         m_inShaderObjectLayer ? m_inShaderObjectLayer->getScaleX() : 1.f;
@@ -1002,7 +1036,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
         [&](PlayerObject *player, PlayerState &state,
             const std::vector<PlayerButtonCommand> &pendingClicks,
             double tCurrent, double timeScale) {
-          double dtSeconds = tCurrent - state.lastTime;
+          double anchorTime = getRenderAnchorTime(state);
+          double dtSeconds = tCurrent - anchorTime;
           if (dtSeconds < 0.0)
             dtSeconds = 0.0;
 
@@ -1027,7 +1062,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           g_extrapolating = true;
 
           double currentTime = state.lastTime;
-          double targetTime = state.lastTime + dtSeconds;
+          double targetTime = anchorTime + dtSeconds;
           state.isDead = false;
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
@@ -1115,6 +1150,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       auto &state = m_fields->p1;
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
+        double anchorTime = getRenderAnchorTime(state);
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
             state.lastDt > 0.0001f) {
@@ -1123,18 +1159,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
             timeScale = (state.lastDt / 60.0f) / diff;
           }
         }
-        double dtSeconds = tCurrent - state.lastTime;
+        double dtSeconds = tCurrent - anchorTime;
         if (dtSeconds < 0.0) dtSeconds = 0.0;
-        double maxDtSeconds = 0.0;
+
+        double physicsWindow = getPhysicsWindowSeconds(state, timeScale);
+        double renderLeadCap = physicsWindow * 1.35;
+        double maxDtSeconds = physicsWindow;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = state.lastTime - state.prevTime;
-        } else {
-          maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? (state.lastDt / 60.0f / timeScale)
-                             : 0.033;
+          maxDtSeconds = std::max(maxDtSeconds, state.lastTime - state.prevTime);
         }
+        maxDtSeconds = std::max(maxDtSeconds, renderLeadCap);
+
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
-        double tCurrentClamped = state.lastTime + dtSeconds;
+        double tCurrentClamped = anchorTime + dtSeconds;
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           m_fields->m_pendingClicks1.clear();
@@ -1168,6 +1205,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       auto &state = m_fields->p2;
       if (state.lastTime != 0 && !dead) {
         double tCurrent = getCurrentTimestamp();
+        double anchorTime = getRenderAnchorTime(state);
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
             state.lastDt > 0.0001f) {
@@ -1176,18 +1214,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
             timeScale = (state.lastDt / 60.0f) / diff;
           }
         }
-        double dtSeconds = tCurrent - state.lastTime;
+        double dtSeconds = tCurrent - anchorTime;
         if (dtSeconds < 0.0) dtSeconds = 0.0;
-        double maxDtSeconds = 0.0;
+
+        double physicsWindow = getPhysicsWindowSeconds(state, timeScale);
+        double renderLeadCap = physicsWindow * 1.35;
+        double maxDtSeconds = physicsWindow;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime) {
-          maxDtSeconds = state.lastTime - state.prevTime;
-        } else {
-          maxDtSeconds = (state.lastDt > 0.0001f)
-                             ? (state.lastDt / 60.0f / timeScale)
-                             : 0.033;
+          maxDtSeconds = std::max(maxDtSeconds, state.lastTime - state.prevTime);
         }
+        maxDtSeconds = std::max(maxDtSeconds, renderLeadCap);
+
         if (dtSeconds > maxDtSeconds) dtSeconds = maxDtSeconds;
-        double tCurrentClamped = state.lastTime + dtSeconds;
+        double tCurrentClamped = anchorTime + dtSeconds;
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
           m_fields->m_pendingClicks2.clear();
@@ -1223,6 +1262,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
+      double anchorTime = getRenderAnchorTime(m_fields->p1);
       double timeScale = m_gameState.m_timeWarp;
       if (m_fields->p1.prevTime > 0.0001 &&
           m_fields->p1.lastTime > m_fields->p1.prevTime &&
@@ -1232,7 +1272,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           timeScale = (m_fields->p1.lastDt / 60.0f) / diff;
         }
       }
-      double dtSeconds = tCurrent - m_fields->p1.lastTime;
+      double dtSeconds = tCurrent - anchorTime;
       if (dtSeconds < 0.0) dtSeconds = 0.0;
       double maxDtSeconds = 0.0;
       if (m_fields->p1.prevTime > 0.0001 &&
@@ -1290,8 +1330,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (!m_fields->m_disableRestoreThisFrame) {
       restoreGroundState(m_groundLayer, groundState1);
       restoreGroundState(m_groundLayer2, groundState2);
-      restoreNodePositions(m_fields->m_savedGroundChildren1, m_groundLayer);
-      restoreNodePositions(m_fields->m_savedGroundChildren2, m_groundLayer2);
+      restoreNodePositions(m_fields->m_savedGroundChildren1, m_groundLayer,
+                           m_fields->m_savedGroundChildren1Complete);
+      restoreNodePositions(m_fields->m_savedGroundChildren2, m_groundLayer2,
+                           m_fields->m_savedGroundChildren2Complete);
     }
 
     if (hasBg) {
@@ -1346,6 +1388,8 @@ class $modify(MyPlayLayer, PlayLayer) {
       if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this))) {
         myBgl->m_fields->p1 = PlayerState{};
         myBgl->m_fields->p2 = PlayerState{};
+        myBgl->m_fields->p1.sampleTime = 0.0;
+        myBgl->m_fields->p2.sampleTime = 0.0;
         myBgl->m_fields->m_enableSolidCollisions = true;
         myBgl->m_fields->m_teleportYOffset = 0.0;
         myBgl->m_fields->m_pendingClicks1.clear();
@@ -1354,6 +1398,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         myBgl->m_fields->m_savedGroundChildren1.clear();
         myBgl->m_fields->m_savedGroundChildren2.clear();
         myBgl->m_fields->m_aliveNodes.clear();
+        myBgl->m_fields->m_savedGroundChildren1Complete = true;
+        myBgl->m_fields->m_savedGroundChildren2Complete = true;
         myBgl->m_fields->m_resetPending = true;
         myBgl->m_fields->m_skipFramesAfterReset = 2;
         myBgl->m_fields->m_disableRestoreThisFrame = true;
@@ -1385,6 +1431,8 @@ class $modify(CBFEditorLayer, LevelEditorLayer) {
       if (auto *myBgl = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this))) {
         myBgl->m_fields->p1 = PlayerState{};
         myBgl->m_fields->p2 = PlayerState{};
+        myBgl->m_fields->p1.sampleTime = 0.0;
+        myBgl->m_fields->p2.sampleTime = 0.0;
         myBgl->m_fields->m_enableSolidCollisions = true;
         myBgl->m_fields->m_teleportYOffset = 0.0;
         myBgl->m_fields->m_pendingClicks1.clear();
@@ -1393,6 +1441,8 @@ class $modify(CBFEditorLayer, LevelEditorLayer) {
         myBgl->m_fields->m_savedGroundChildren1.clear();
         myBgl->m_fields->m_savedGroundChildren2.clear();
         myBgl->m_fields->m_aliveNodes.clear();
+        myBgl->m_fields->m_savedGroundChildren1Complete = true;
+        myBgl->m_fields->m_savedGroundChildren2Complete = true;
         myBgl->m_fields->m_resetPending = true;
         myBgl->m_fields->m_skipFramesAfterReset = 2;
         myBgl->m_fields->m_disableRestoreThisFrame = true;
@@ -1545,6 +1595,7 @@ class $modify(MyPlayer, PlayerObject) {
         state->lastRot = rotBefore;
         state->lastDt = 0;
       }
+      state->sampleTime = getCurrentTimestamp();
     }
 
     PlayerObject::update(dt);
