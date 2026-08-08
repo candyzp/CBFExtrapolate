@@ -40,6 +40,23 @@ $on_mod(Loaded) {
   }
 }
 
+static inline float clamp01f(float v) {
+  return std::max(0.f, std::min(1.f, v));
+}
+
+static inline float lerpf(float a, float b, float t) {
+  return a + (b - a) * t;
+}
+
+static inline CCPoint lerpPoint(CCPoint const& a, CCPoint const& b, float t) {
+  return CCPoint{lerpf(a.x, b.x, t), lerpf(a.y, b.y, t)};
+}
+
+static inline float smoothstepf(float t) {
+  t = clamp01f(t);
+  return t * t * (3.f - 2.f * t);
+}
+
 // RAII guard so g_extrapolating is always restored, even if an exception
 // escapes the extrapolation lambda. A stuck-true flag would silently break
 // every subsequent frame (toggleFlipped, playDeathEffect, HardStreak::addPoint
@@ -78,7 +95,7 @@ struct PlayerState {
   // gap jitters with OS scheduling / CPU load, and at high timeScale that
   // jitter is multiplied directly into player position. Smoothing the
   // *timing* (not the position) keeps the prediction itself stable, so
-  // there is nothing to "hide" — the extrapolation just runs for a
+  // there is nothing to "hide" â€” the extrapolation just runs for a
   // consistent duration every frame instead of stuttering forward/back.
   double smoothedDtSeconds = 0.0;
 };
@@ -395,7 +412,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     }
   };
 
-
   // Returns the timestamp of the player state we extrapolate FROM.
   // Previously this returned sampleTime (captured BEFORE PlayerObject::update),
   // but syncFakePlayer copies the POST-update position into the fake player,
@@ -424,7 +440,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
   // Computes a stable, per-player timeScale from the most recent pair of
   // physics ticks. Returns false (and leaves timeScale untouched) if there
-  // is not enough history yet — in that case the caller's fallback
+  // is not enough history yet â€” in that case the caller's fallback
   // (m_gameState.m_timeWarp) is used.
   static bool computeTimeScale(const PlayerState &state,
                                double fallbackWarp,
@@ -519,24 +535,50 @@ class $modify(MyBGL, GJBaseGameLayer) {
     return state;
   }
 
-  void applyRenderPlayerStateFromFake(PlayerObject *real, PlayerObject *fake) {
-    if (!real || !fake)
+  void applyRenderPlayerState(PlayerObject *real, RenderPlayerState const &state) {
+    if (!real)
       return;
 
-    real->CCNode::setPosition(fake->getPosition());
-    real->setRotation(fake->getRotation());
-    real->setScaleX(fake->getScaleX());
-    real->setScaleY(fake->getScaleY());
-    real->setFlipX(fake->isFlipX());
-    real->setFlipY(fake->isFlipY());
+    real->CCNode::setPosition(state.nodePos);
+    real->setRotation(state.rotation);
+    real->setScaleX(state.scaleX);
+    real->setScaleY(state.scaleY);
+    real->setFlipX(state.flipX);
+    real->setFlipY(state.flipY);
 
-    real->m_position = fake->m_position;
-    real->m_positionX = fake->m_positionX;
-    real->m_positionY = fake->m_positionY;
-    real->m_unmodifiedPositionX = fake->m_unmodifiedPositionX;
-    real->m_unmodifiedPositionY = fake->m_unmodifiedPositionY;
-    real->m_lastPosition = fake->m_lastPosition;
-    real->m_lastPortalPos = fake->m_lastPortalPos;
+    real->m_position = state.robPos;
+    real->m_positionX = state.positionX;
+    real->m_positionY = state.positionY;
+    real->m_unmodifiedPositionX = state.unmodifiedPositionX;
+    real->m_unmodifiedPositionY = state.unmodifiedPositionY;
+    real->m_lastPosition = state.lastPosition;
+    real->m_lastPortalPos = state.lastPortalPos;
+  }
+
+  RenderPlayerState blendRenderPlayerState(RenderPlayerState const &base,
+                                           RenderPlayerState const &target,
+                                           float t) {
+    RenderPlayerState out = base;
+    t = smoothstepf(t);
+
+    out.nodePos = lerpPoint(base.nodePos, target.nodePos, t);
+    out.robPos = lerpPoint(base.robPos, target.robPos, t);
+    out.positionX = lerpf(base.positionX, target.positionX, t);
+    out.positionY = lerpf(base.positionY, target.positionY, t);
+    out.unmodifiedPositionX = lerpf(base.unmodifiedPositionX, target.unmodifiedPositionX, t);
+    out.unmodifiedPositionY = lerpf(base.unmodifiedPositionY, target.unmodifiedPositionY, t);
+    out.lastPosition = lerpPoint(base.lastPosition, target.lastPosition, t);
+    out.lastPortalPos = lerpPoint(base.lastPortalPos, target.lastPortalPos, t);
+    out.rotation = lerpf(base.rotation, target.rotation, t);
+    out.scaleX = lerpf(base.scaleX, target.scaleX, t);
+    out.scaleY = lerpf(base.scaleY, target.scaleY, t);
+    out.flipX = t < 0.5f ? base.flipX : target.flipX;
+    out.flipY = t < 0.5f ? base.flipY : target.flipY;
+    out.hasWaveTrail = base.hasWaveTrail || target.hasWaveTrail;
+    out.waveTrailCount = t < 0.5f ? base.waveTrailCount : target.waveTrailCount;
+    out.waveTrailCurrentPoint = lerpPoint(base.waveTrailCurrentPoint,
+                                          target.waveTrailCurrentPoint, t);
+    return out;
   }
 
   void restoreRenderPlayerState(PlayerObject *player,
@@ -663,7 +705,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (node->getChildren()) {
       for (auto *child :
-           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
+           geode::cocos2d::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
         if (!child)
           continue;
         saveNodePositionsRecursive(child, saved, complete);
@@ -680,7 +722,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (node->getChildren()) {
       for (auto *child :
-           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
+           geode::cocos2d::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
         collectAliveNodesRecursive(child, alive);
       }
     }
@@ -695,7 +737,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     if (node->getChildren()) {
       for (auto *child :
-           geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
+           geode::cocos2d::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
         if (!child)
           return false;
         if (!positionsUnchangedRecursive(child, saved, index))
@@ -1098,7 +1140,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
             // Adaptive substep: aim for ~4 substeps minimum for accuracy,
             // cap at 0.25 (matches CBF), floor at 0.0625 so tiny deltas
             // don't spawn hundreds of substeps. For very small dtFrames
-            // this naturally collapses to 1–2 substeps.
+            // this naturally collapses to 1â€“2 substeps.
             double stepSize = std::max(0.0625, std::min(0.25, dtFrames / 4.0));
 
             while (remaining > 0.0) {
@@ -1186,19 +1228,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
         computeTimeScale(state, m_gameState.m_timeWarp, timeScale);
 
         double physicsWindow = getPhysicsWindowSeconds(state, timeScale);
-        // Cap at 2x the physics window — enough headroom to never clamp on
+        // Cap at 2x the physics window â€” enough headroom to never clamp on
         // a normal frame at any speed, but small enough to prevent
         // runaway extrapolation if the renderer is very late. The previous
         // physicsWindow * 1.35 was too tight at high timeScale: physicsWindow
         // shrinks with speed, so at 3x the cap was ~7.5ms and the actual
         // render gap frequently exceeded it, causing alternating
-        // clamp/no-clamp frames → visible stutter.
+        // clamp/no-clamp frames â†’ visible stutter.
         double maxDtSeconds = physicsWindow * 2.0;
 
         double rawDtSeconds = tCurrent - state.lastTime;
         if (rawDtSeconds < 0.0)
           rawDtSeconds = 0.0;
-        // Don't let a one-off frame hitch poison the EMA — clamp the raw
+        // Don't let a one-off frame hitch poison the EMA â€” clamp the raw
         // sample first. This is the ONLY input that gets smoothed; the
         // output is what the extrapolation actually runs for.
         if (rawDtSeconds > maxDtSeconds * 2.0)
@@ -1219,7 +1261,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double dtSeconds = std::min(state.smoothedDtSeconds, maxDtSeconds);
         double tCurrentClamped = state.lastTime + dtSeconds;
 
-        // 100ms sanity bound (was 2.0s — a 2-second extrapolation would
+        // 100ms sanity bound (was 2.0s â€” a 2-second extrapolation would
         // freeze the game for ~120 physics frames). If we somehow exceed
         // this, skip extrapolation entirely and render at the raw physics
         // position; next frame will recover.
@@ -1246,7 +1288,18 @@ class $modify(MyBGL, GJBaseGameLayer) {
                             m_fields->m_pendingClicks1, tCurrentClamped,
                             timeScale);
 
-          applyRenderPlayerStateFromFake(m_player1, m_fields->m_fakePlayer1);
+          RenderPlayerState predictedP1State =
+              saveRenderPlayerState(m_fields->m_fakePlayer1);
+
+          float renderBlend = 0.f;
+          if (physicsWindow > 0.0001) {
+            renderBlend = static_cast<float>(dtSeconds / physicsWindow);
+          }
+          renderBlend = clamp01f(renderBlend);
+
+          applyRenderPlayerState(
+              m_player1,
+              blendRenderPlayerState(origP1State, predictedP1State, renderBlend));
         }
       }
     }
@@ -1300,7 +1353,18 @@ class $modify(MyBGL, GJBaseGameLayer) {
                             m_fields->m_pendingClicks2, tCurrentClamped,
                             timeScale);
 
-          applyRenderPlayerStateFromFake(m_player2, m_fields->m_fakePlayer2);
+          RenderPlayerState predictedP2State =
+              saveRenderPlayerState(m_fields->m_fakePlayer2);
+
+          float renderBlend = 0.f;
+          if (physicsWindow > 0.0001) {
+            renderBlend = static_cast<float>(dtSeconds / physicsWindow);
+          }
+          renderBlend = clamp01f(renderBlend);
+
+          applyRenderPlayerState(
+              m_player2,
+              blendRenderPlayerState(origP2State, predictedP2State, renderBlend));
         }
       }
     }
@@ -1310,14 +1374,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
     GJGameState origGameState;
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
-      // Camera uses p1's smoothed dt so it tracks the player exactly —
-      // if they used different durations the camera would lag or lead the
+      // Camera uses p1's smoothed dt so it tracks the player exactly â€”; if
+      // they used different durations the camera would lag or lead the
       // player by a sub-frame, which reads as micro-stutter.
       double timeScale = 1.0;
       computeTimeScale(m_fields->p1, m_gameState.m_timeWarp, timeScale);
 
-      double physicsWindow =
-          getPhysicsWindowSeconds(m_fields->p1, timeScale);
+      double physicsWindow = getPhysicsWindowSeconds(m_fields->p1, timeScale);
       double maxDtSeconds = physicsWindow * 2.0;
       double dtSeconds = std::min(m_fields->p1.smoothedDtSeconds,
                                   maxDtSeconds);
@@ -1503,225 +1566,6 @@ static bool isFakePlayer(PlayerObject *player) {
 }
 
 class $modify(MyPlayer, PlayerObject) {
-  // Motion-blur ghost pool. We clone the player's primary sprite (m_mainSprite)
-  // at fractional offsets along the velocity vector, creating a short
-  // directional streak behind the rendered position. The streak length and
-  // opacity scale with speed — invisible at normal speed, subtle at high
-  // speed, stronger at very high speed. The goal is a 120fps feel without
-  // the blur being obvious.
-  struct Fields {
-    std::vector<CCSprite*> blurGhosts;
-    bool blurGhostsInited = false;
-    CCPoint lastBlurPos = {0, 0};
-    bool hasLastBlurPos = false;
-
-    ~Fields() {
-      for (auto *ghost : blurGhosts) {
-        if (ghost && ghost->getParent()) {
-          ghost->removeFromParentAndCleanup(true);
-        }
-      }
-      blurGhosts.clear();
-    }
-  };
-
-  void initBlurGhosts() {
-    if (m_fields->blurGhostsInited)
-      return;
-
-    auto *parent = this->getParent();
-    if (!parent)
-      return;
-
-    int playerZ = this->getZOrder();
-    for (int i = 0; i < 4; ++i) {
-      auto *ghost = CCSprite::create();
-      if (!ghost)
-        continue;
-      ghost->setVisible(false);
-      ghost->setZOrder(playerZ - 1);
-      parent->addChild(ghost);
-      m_fields->blurGhosts.push_back(ghost);
-    }
-    m_fields->blurGhostsInited = true;
-  }
-
-  void updateMotionBlur(float dt) {
-    (void)dt;
-
-    // Validate ghosts (level reset / parent change can orphan them)
-    bool needReinit = !m_fields->blurGhostsInited;
-    for (auto *g : m_fields->blurGhosts) {
-      if (!g || !g->getParent()) {
-        needReinit = true;
-        break;
-      }
-    }
-    if (needReinit) {
-      for (auto *g : m_fields->blurGhosts) {
-        if (g && g->getParent())
-          g->removeFromParentAndCleanup(true);
-      }
-      m_fields->blurGhosts.clear();
-      m_fields->blurGhostsInited = false;
-      initBlurGhosts();
-    }
-    if (!m_fields->blurGhostsInited || m_fields->blurGhosts.empty())
-      return;
-
-    if (m_isDead || !this->isVisible()) {
-      for (auto *g : m_fields->blurGhosts) {
-        if (g)
-          g->setVisible(false);
-      }
-      return;
-    }
-
-    CCPoint currentPos = this->getPosition();
-
-    // Detect position jump (teleport, reset, ring jump) — hide ghosts
-    // for one frame so we don't draw a streak across the jump.
-    if (m_fields->hasLastBlurPos) {
-      CCPoint delta = currentPos - m_fields->lastBlurPos;
-      float posDelta = delta.getLength();
-      if (posDelta > 50.f) {
-        for (auto *g : m_fields->blurGhosts) {
-          if (g)
-            g->setVisible(false);
-        }
-        m_fields->lastBlurPos = currentPos;
-        return;
-      }
-    }
-    m_fields->lastBlurPos = currentPos;
-    m_fields->hasLastBlurPos = true;
-
-    // Find the primary visible sprite. m_mainSprite is on the GameObject
-    // base but is not exposed by the Geode binding for PlayerObject, so we
-    // walk children and pick the largest visible CCSprite — that's the
-    // icon (cube mode) or vehicle (ship/ball/UFO/etc.) and works across
-    // every game mode without hardcoding member names.
-    CCSprite *primary = nullptr;
-    float maxArea = 0.f;
-    if (this->getChildren()) {
-      for (auto *child :
-           geode::cocos::CCArrayExt<cocos2d::CCNode *>(this->getChildren())) {
-        if (!child || !child->isVisible())
-          continue;
-        auto *sprite = geode::cast::typeinfo_cast<cocos2d::CCSprite *>(child);
-        if (!sprite)
-          continue;
-        cocos2d::CCSize size = sprite->getScaledContentSize();
-        float area = size.width * size.height;
-        if (area > maxArea) {
-          maxArea = area;
-          primary = sprite;
-        }
-      }
-    }
-    if (!primary) {
-      for (auto *g : m_fields->blurGhosts) {
-        if (g)
-          g->setVisible(false);
-      }
-      return;
-    }
-
-    // Post-update velocity (units per frame at current speed)
-    CCPoint vel(static_cast<float>(this->getCurrentXVelocity()),
-                static_cast<float>(this->m_yVelocity));
-    float speed = vel.getLength();
-
-    // Speed thresholds: cube moves ~5.2 units/frame at 1x. Blur starts at
-    // ~1.7x and saturates at ~4x. This keeps normal-speed play clean.
-    const float BLUR_SPEED_START = 9.0f;
-    const float BLUR_SPEED_MAX = 22.0f;
-    float blurFactor = (speed - BLUR_SPEED_START) / (BLUR_SPEED_MAX - BLUR_SPEED_START);
-    if (blurFactor < 0.f)
-      blurFactor = 0.f;
-    if (blurFactor > 1.f)
-      blurFactor = 1.f;
-
-    if (blurFactor < 0.05f) {
-      for (auto *g : m_fields->blurGhosts) {
-        if (g)
-          g->setVisible(false);
-      }
-      return;
-    }
-
-    // Snapshot primary sprite's appearance so ghosts match the player exactly.
-    auto *frame = primary->displayFrame();
-    CCPoint primaryAnchor = primary->getAnchorPoint();
-    float primaryRot = primary->getRotation();
-    float primaryScaleX = primary->getScaleX();
-    float primaryScaleY = primary->getScaleY();
-    bool primaryFlipX = primary->isFlipX();
-    bool primaryFlipY = primary->isFlipY();
-
-    // Combined transform (player node + primary sprite). The ghost is a
-    // sibling of the player, so we need to bake the player's own transform
-    // into the ghost to match the visual exactly.
-    float ghostRot = this->getRotation() + primaryRot;
-    float ghostScaleX = this->getScaleX() * primaryScaleX;
-    float ghostScaleY = this->getScaleY() * primaryScaleY;
-    bool ghostFlipX = this->isFlipX() != primaryFlipX;
-    bool ghostFlipY = this->isFlipY() != primaryFlipY;
-
-    int totalGhosts = (int)m_fields->blurGhosts.size();
-    // Number of visible ghosts ramps from 2 to totalGhosts with speed.
-    int numActive = 2 + (int)(blurFactor * (float)(totalGhosts - 1));
-    if (numActive > totalGhosts)
-      numActive = totalGhosts;
-    if (numActive < 1)
-      numActive = 1;
-
-    const float BLUR_MAX_OPACITY = 50.0f;
-
-    for (int i = 0; i < totalGhosts; ++i) {
-      CCSprite *ghost = m_fields->blurGhosts[i];
-      if (!ghost)
-        continue;
-
-      if (i < numActive) {
-        float t = (numActive > 1) ? (float)i / (float)(numActive - 1) : 0.f;
-
-        // Position ghosts just behind the rendered player. The extrapolation
-        // moves the player approximately one frame's worth of velocity ahead
-        // of currentPos, so currentPos + vel is roughly the rendered position.
-        // Ghosts are placed at fractions of vel (0.75–1.0 of the way to
-        // rendered), creating a short comet tail. Streak length scales with
-        // blurFactor so it stays subtle at lower speeds and grows at high
-        // speed. Direction is automatic — it's just the velocity vector.
-        float posFactor = 1.0f - t * 0.25f * blurFactor;
-
-        CCPoint offset(vel.x * posFactor, vel.y * posFactor);
-        ghost->setPosition(currentPos + offset);
-
-        if (frame)
-          ghost->setDisplayFrame(frame);
-        ghost->setAnchorPoint(primaryAnchor);
-        ghost->setRotation(ghostRot);
-        ghost->setScaleX(ghostScaleX);
-        ghost->setScaleY(ghostScaleY);
-        ghost->setFlipX(ghostFlipX);
-        ghost->setFlipY(ghostFlipY);
-
-        // Opacity fades from front (most visible) to back (least visible).
-        // Capped at 50/255 — about 20% — to keep the effect subtle.
-        float opacity = BLUR_MAX_OPACITY * blurFactor * (1.f - t * 0.5f);
-        if (opacity < 0.f)
-          opacity = 0.f;
-        if (opacity > 255.f)
-          opacity = 255.f;
-        ghost->setOpacity((GLubyte)opacity);
-        ghost->setVisible(true);
-      } else {
-        ghost->setVisible(false);
-      }
-    }
-  }
-
   static void onModify(auto &self) {
     (void)self.setHookPriority("PlayerObject::update", Priority::VeryEarly);
     (void)self.setHookPriorityPre("PlayerObject::playDeathEffect",
@@ -1863,11 +1707,6 @@ class $modify(MyPlayer, PlayerObject) {
       state->lastDt = dt;
       state->steps++;
     }
-
-    // Motion blur — runs after physics so we have the post-update velocity.
-    // Ghosts are positioned at currentPos + vel * fraction, which lands them
-    // just behind the extrapolated render position naturally.
-    updateMotionBlur(dt);
   }
 
   void spiderTestJumpInternal(bool dynamic) {
