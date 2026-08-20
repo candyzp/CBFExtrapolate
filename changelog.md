@@ -1,3 +1,6 @@
+# 2.3.6
+- Fixed some levels not working correctly
+
 # 2.3.4
 - Removed shared memory reading
 - Various bug fixes

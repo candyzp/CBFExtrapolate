@@ -540,6 +540,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    GJGameState origGameState = m_gameState;
     auto origTweenActions = m_gameState.m_tweenActions;
     auto origCameraOffset = m_gameState.m_cameraOffset;
     auto origCameraZoom = m_gameState.m_cameraZoom;
@@ -911,7 +912,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     bool cameraExtrapolated = false;
     CameraState camState;
-    GJGameState origGameState;
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double tCurrent = getCurrentTimestamp();
@@ -938,7 +938,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
         camState = saveCameraState();
-        origGameState = m_gameState;
         cameraExtrapolated = true;
 
         double warpedDt = dtSeconds * timeScale;
