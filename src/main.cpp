@@ -1306,19 +1306,3 @@ class $modify(MyEnhancedGameObject, EnhancedGameObject) {
     }
   }
 };
-
-class $modify(MyGJGroundLayer, GJGroundLayer) {
-  void fadeInGround(float duration) {
-    if (g_extrapolating) {
-      return;
-    }
-    GJGroundLayer::fadeInGround(duration);
-  }
-
-  void fadeOutGround(float duration) {
-    if (g_extrapolating) {
-      return;
-    }
-    GJGroundLayer::fadeOutGround(duration);
-  }
-};
