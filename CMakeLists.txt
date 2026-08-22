@@ -49,6 +49,14 @@ endif()
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
+# Clang diagnoses the existing unsigned-char list initialization in main.cpp as
+# a C++11 narrowing error. Disabling only that diagnostic keeps the exact same
+# generated code and runtime behavior while allowing the existing expression to
+# compile on the current Xcode/Clang toolchain.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wno-c++11-narrowing)
+endif()
+
 if (NOT DEFINED ENV{GEODE_SDK})
     message(FATAL_ERROR "Unable to find Geode SDK! Please define GEODE_SDK environment variable to point to Geode")
 else()
