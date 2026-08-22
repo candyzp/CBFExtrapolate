@@ -336,11 +336,8 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
     return;
 
   CCRect playerRect = player->getObjectRect();
-
-  [[maybe_unused]] float playerMinX = player->getObjectRect().getMinX();
-  [[maybe_unused]] float playerMaxX = player->getObjectRect().getMaxX();
-  [[maybe_unused]] float playerMinY = player->getObjectRect().getMinY();
-  [[maybe_unused]] float playerMaxY = player->getObjectRect().getMaxY();
+  auto &trajectory = Bot::get()->trajectory();
+  const bool fakePlayer = trajectory.isFakePlayer(player);
 
   for (int i = 0; i < objectCount; i++) {
     GameObject *object = objects->at(i);
@@ -360,7 +357,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     if (object->m_objectType == GameObjectType::Solid ||
         object->m_objectType == GameObjectType::Breakable) {
-      if (Bot::get()->trajectory().isFakePlayer(player) && !enableSolids) {
+      if (fakePlayer && !enableSolids) {
         continue;
       }
 
@@ -382,7 +379,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
 
     if (object->m_objectType == GameObjectType::Hazard ||
         object->m_objectType == GameObjectType::AnimatedHazard) {
-      if (Bot::get()->trajectory().isFakePlayer(player)) {
+      if (fakePlayer) {
         continue;
       }
       if (pl->m_hazardCollisionObjectsCount <
@@ -399,13 +396,10 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
       continue;
     }
 
-    auto bot = Bot::get();
     EffectGameObject *obj = (EffectGameObject *)object;
-    if (!obj)
-      continue;
 
-    if ((bot->trajectory().playerHasActivated(player, obj) ||
-         bot->trajectory().realPlayerHasActivated(player, obj)) &&
+    if ((trajectory.playerHasActivated(player, obj) ||
+         trajectory.realPlayerHasActivated(player, obj)) &&
         (object->m_objectType != GameObjectType::Slope))
       continue;
 
@@ -447,20 +441,14 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
       player->m_lastActivatedPortal = object;
       activateForTrajectory(obj, player);
       phys::flipGravity(player, true);
-      playerMinX = player->getObjectRect().getMinX();
-      playerMaxX = player->getObjectRect().getMaxX();
-      playerMinY = player->getObjectRect().getMinY();
-      playerMaxY = player->getObjectRect().getMaxY();
+      (void)player->getObjectRect();
       break;
     case GameObjectType::NormalGravityPortal:
       player->m_lastPortalPos = object->getPosition();
       player->m_lastActivatedPortal = object;
       activateForTrajectory(obj, player);
       phys::flipGravity(player, false);
-      playerMinX = player->getObjectRect().getMinX();
-      playerMaxX = player->getObjectRect().getMaxX();
-      playerMinY = player->getObjectRect().getMinY();
-      playerMaxY = player->getObjectRect().getMaxY();
+      (void)player->getObjectRect();
       break;
     case GameObjectType::GravityTogglePortal:
       player->m_lastPortalPos = object->getPosition();
@@ -484,11 +472,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
                                                false, true);
       }
 
-      playerMinX = player->getObjectRect().getMinX();
-      playerMaxX = player->getObjectRect().getMaxX();
-      playerMinY = player->getObjectRect().getMinY();
-      playerMaxY = player->getObjectRect().getMaxY();
-
+      (void)player->getObjectRect();
       break;
     case GameObjectType::CustomRing:
     case GameObjectType::DashRing:
@@ -704,6 +688,7 @@ void checkSpawnObjects(GJBaseGameLayer *pl, PlayerObject *player) {
   auto backIt = related1.find(channel);
   int startingIndex = startIt == related0.end() ? 0 : startIt->second;
   bool goingBack = backIt != related1.end() && backIt->second;
+  auto &trajectory = Bot::get()->trajectory();
 
   for (int i = startingIndex; static_cast<unsigned int>(i) < objects->count();
        i++) {
@@ -736,9 +721,8 @@ void checkSpawnObjects(GJBaseGameLayer *pl, PlayerObject *player) {
 
     if (object->m_isGroupDisabled)
       continue;
-    auto bot = Bot::get();
-    if (bot->trajectory().playerHasActivated(player, object) ||
-        bot->trajectory().realPlayerHasActivated(player, object))
+    if (trajectory.playerHasActivated(player, object) ||
+        trajectory.realPlayerHasActivated(player, object))
       continue;
 
     if (!object->m_isTouchTriggered) {
