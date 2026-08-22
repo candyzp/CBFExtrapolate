@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 using namespace geode::prelude;
@@ -54,10 +53,13 @@ struct PlayerState {
   CCPoint lastPos = {0, 0};
   CCPoint lastVel = {0, 0};
   CCPoint prevVel = {0, 0};
+  CCPoint previousStepPos = {0, 0};
+  CCPoint previousStepRobPos = {0, 0};
   float lastRot = 0;
   double lastTime = 0;
   double prevTime = 0;
   float lastDt = 0;
+  float lastStepDt = 0;
   int lastSteps = 0;
   int steps = 0;
   double prog = 0;
@@ -67,6 +69,37 @@ struct PlayerState {
 
 static bool isSlidingOnDartBlock(PlayerObject *player) {
   return player && player->m_isDart && player->m_stateDartSlide > 0;
+}
+
+static bool extrapolateDartSlideFromConfirmedMotion(
+    PlayerObject *player, const PlayerState &state,
+    const CCPoint &currentPos, const CCPoint &currentRobPos, double dtSeconds,
+    double timeScale, CCPoint &renderPos, CCPoint &renderRobPos) {
+  if (!isSlidingOnDartBlock(player) || player->m_isOnSlope ||
+      state.lastStepDt <= 0.0f) {
+    return false;
+  }
+
+  double renderFrames = dtSeconds * timeScale * 60.0;
+  if (!std::isfinite(renderFrames)) {
+    renderFrames = 0.0;
+  }
+  float alpha = static_cast<float>(
+      std::clamp(renderFrames / state.lastStepDt, 0.0, 1.0));
+
+  // Moving objects only advance on physics ticks. Continue the player's last
+  // confirmed contact motion while touching a D block instead of running a
+  // fake collision against the object's stale position. Player and camera now
+  // remain on the same render timeline without switching to a raw frame.
+  renderPos.x =
+      currentPos.x + (currentPos.x - state.previousStepPos.x) * alpha;
+  renderPos.y =
+      currentPos.y + (currentPos.y - state.previousStepPos.y) * alpha;
+  renderRobPos.x = currentRobPos.x +
+                   (currentRobPos.x - state.previousStepRobPos.x) * alpha;
+  renderRobPos.y = currentRobPos.y +
+                   (currentRobPos.y - state.previousStepRobPos.y) * alpha;
+  return true;
 }
 
 static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
@@ -566,19 +599,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
-    // A D block lets the wave slide against a solid surface. Extrapolating a
-    // cloned wave while that short-lived collision state is active can put the
-    // player and camera on different sides of the contact correction, which
-    // presents as a flickering/duplicated icon. Render the authoritative frame
-    // for this contact instead; physics and input handling remain untouched.
-    bool dartBlockContact = isSlidingOnDartBlock(m_player1) ||
-                            (m_gameState.m_isDualMode &&
-                             isSlidingOnDartBlock(m_player2));
-    if (dartBlockContact) {
-      Bot::get()->trajectory().deactivateAllRemembered();
-      GJBaseGameLayer::visit();
-      return;
-    }
+    // Every visual prediction in this visit must target the same instant.
+    // Reading the clock again after player simulation made the camera predict
+    // farther than the players, with the mismatch varying by frame workload.
+    const double renderTime = getCurrentTimestamp();
 
     // Keep this snapshot alive so its containers can reuse their allocations
     // instead of rebuilding the entire game state on every rendered frame.
@@ -818,7 +842,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
       if (state.lastTime != 0 && !dead) {
-        double tCurrent = getCurrentTimestamp();
+        double tCurrent = renderTime;
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
             state.lastDt > 0.0001f) {
@@ -841,34 +865,39 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double tCurrentClamped = state.lastTime + dtSeconds;
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-          auto &pendingClicks = m_fields->m_pendingClicks1;
-          pendingClicks.clear();
-          if (hasCBF) {
-            bool isTwoPlayer =
-                m_levelSettings && m_levelSettings->m_twoPlayerMode;
-            for (const auto &cmd : m_queuedButtons) {
-              bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
-              if (isTarget && cmd.m_timestamp > state.lastTime &&
-                  cmd.m_timestamp <= tCurrentClamped) {
-                pendingClicks.push_back(cmd);
-              }
-            }
-          }
-
-          syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
-
           origP1 = m_player1->getPosition();
           origP1Rob = m_player1->m_position;
 
           simulatedP1 = true;
 
-          extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
-                            tCurrentClamped, timeScale);
+          CCPoint renderPos;
+          CCPoint renderRobPos;
+          if (!extrapolateDartSlideFromConfirmedMotion(
+                  m_player1, state, origP1, origP1Rob, dtSeconds, timeScale,
+                  renderPos, renderRobPos)) {
+            auto &pendingClicks = m_fields->m_pendingClicks1;
+            pendingClicks.clear();
+            if (hasCBF) {
+              bool isTwoPlayer =
+                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
+              for (const auto &cmd : m_queuedButtons) {
+                bool isTarget = !cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget && cmd.m_timestamp > state.lastTime &&
+                    cmd.m_timestamp <= tCurrentClamped) {
+                  pendingClicks.push_back(cmd);
+                }
+              }
+            }
 
-          auto fakePos = m_fields->m_fakePlayer1->getPosition();
-          auto fakeRobPos = m_fields->m_fakePlayer1->m_position;
-          m_player1->CCNode::setPosition(fakePos);
-          m_player1->m_position = fakeRobPos;
+            syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
+            extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
+                              tCurrentClamped, timeScale);
+            renderPos = m_fields->m_fakePlayer1->getPosition();
+            renderRobPos = m_fields->m_fakePlayer1->m_position;
+          }
+
+          m_player1->CCNode::setPosition(renderPos);
+          m_player1->m_position = renderRobPos;
         }
       }
     }
@@ -876,7 +905,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
       auto &state = m_fields->p2;
       if (state.lastTime != 0 && !dead) {
-        double tCurrent = getCurrentTimestamp();
+        double tCurrent = renderTime;
         double timeScale = m_gameState.m_timeWarp;
         if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
             state.lastDt > 0.0001f) {
@@ -899,34 +928,39 @@ class $modify(MyBGL, GJBaseGameLayer) {
         double tCurrentClamped = state.lastTime + dtSeconds;
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
-          auto &pendingClicks = m_fields->m_pendingClicks2;
-          pendingClicks.clear();
-          if (hasCBF) {
-            bool isTwoPlayer =
-                m_levelSettings && m_levelSettings->m_twoPlayerMode;
-            for (const auto &cmd : m_queuedButtons) {
-              bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
-              if (isTarget && cmd.m_timestamp > state.lastTime &&
-                  cmd.m_timestamp <= tCurrentClamped) {
-                pendingClicks.push_back(cmd);
-              }
-            }
-          }
-
-          syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
-
           origP2 = m_player2->getPosition();
           origP2Rob = m_player2->m_position;
 
           simulatedP2 = true;
 
-          extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
-                            tCurrentClamped, timeScale);
+          CCPoint renderPos;
+          CCPoint renderRobPos;
+          if (!extrapolateDartSlideFromConfirmedMotion(
+                  m_player2, state, origP2, origP2Rob, dtSeconds, timeScale,
+                  renderPos, renderRobPos)) {
+            auto &pendingClicks = m_fields->m_pendingClicks2;
+            pendingClicks.clear();
+            if (hasCBF) {
+              bool isTwoPlayer =
+                  m_levelSettings && m_levelSettings->m_twoPlayerMode;
+              for (const auto &cmd : m_queuedButtons) {
+                bool isTarget = cmd.m_isPlayer2 || !isTwoPlayer;
+                if (isTarget && cmd.m_timestamp > state.lastTime &&
+                    cmd.m_timestamp <= tCurrentClamped) {
+                  pendingClicks.push_back(cmd);
+                }
+              }
+            }
 
-          auto fakePos = m_fields->m_fakePlayer2->getPosition();
-          auto fakeRobPos = m_fields->m_fakePlayer2->m_position;
-          m_player2->CCNode::setPosition(fakePos);
-          m_player2->m_position = fakeRobPos;
+            syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
+            extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
+                              tCurrentClamped, timeScale);
+            renderPos = m_fields->m_fakePlayer2->getPosition();
+            renderRobPos = m_fields->m_fakePlayer2->m_position;
+          }
+
+          m_player2->CCNode::setPosition(renderPos);
+          m_player2->m_position = renderRobPos;
         }
       }
     }
@@ -935,7 +969,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     CameraState camState;
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
-      double tCurrent = getCurrentTimestamp();
+      double tCurrent = renderTime;
       double timeScale = m_gameState.m_timeWarp;
       if (m_fields->p1.prevTime > 0.0001 &&
           m_fields->p1.lastTime > m_fields->p1.prevTime &&
@@ -973,7 +1007,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
             filteredTweens[actionID] = tween;
           }
         }
-        m_gameState.m_tweenActions.swap(filteredTweens);
+        m_gameState.m_tweenActions = filteredTweens;
 
         m_gameState.updateTweenActions(dtFloat);
 
@@ -986,11 +1020,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     GJBaseGameLayer::visit();
 
     if (cameraExtrapolated) {
-      // Put the full tween table back into the simulated state so both state
-      // buffers retain comparable container capacity for the next frame.
-      m_gameState.m_tweenActions.swap(m_fields->m_filteredTweens);
       restoreCameraState(camState);
-      std::swap(m_gameState, origGameState);
+      m_gameState = origGameState;
 
       if (hasObj) {
         m_objectLayer->setPosition(origObj);
@@ -1198,11 +1229,14 @@ class $modify(MyPlayer, PlayerObject) {
     }
 
     CCPoint posBefore = this->getPosition();
+    CCPoint robPosBefore = this->m_position;
     float rotBefore = this->getRotation();
     CCPoint velBefore = CCPoint(static_cast<float>(this->getCurrentXVelocity()),
                                 static_cast<float>(this->m_yVelocity));
 
     if (state) {
+      state->previousStepPos = posBefore;
+      state->previousStepRobPos = robPosBefore;
       if (state->steps == 0) {
         state->prevTime = state->lastTime;
         state->lastPos = posBefore;
@@ -1219,6 +1253,7 @@ class $modify(MyPlayer, PlayerObject) {
       state->lastVel = CCPoint(static_cast<float>(this->getCurrentXVelocity()),
                                static_cast<float>(this->m_yVelocity));
       state->lastDt += dt;
+      state->lastStepDt = dt;
       state->steps++;
     }
   }
