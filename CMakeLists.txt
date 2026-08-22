@@ -14,6 +14,37 @@ project(CBFExtrapolate VERSION 1.0.0)
 # Add all source files inside src (recursively)
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 
+# Geode 5.9.0's Android GNU-STL compatibility layer does not support the
+# swap/move-assignment paths used by the camera extrapolation state restore
+# when compiling with Clang 21 / NDK r29. Build an Android-only generated copy
+# of main.cpp that keeps the same behavior while using its supported copy
+# assignment paths. Other platforms keep the faster swap-based implementation.
+if (ANDROID OR "${CMAKE_SYSTEM_NAME}" STREQUAL "Android")
+    set(CBF_MAIN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+    file(READ "${CBF_MAIN_SOURCE}" CBF_MAIN_ANDROID)
+
+    string(REPLACE
+        "m_gameState.m_tweenActions.swap(filteredTweens);"
+        "m_gameState.m_tweenActions = filteredTweens;"
+        CBF_MAIN_ANDROID "${CBF_MAIN_ANDROID}")
+    string(REPLACE
+        "m_gameState.m_tweenActions.swap(m_fields->m_filteredTweens);"
+        "m_gameState.m_tweenActions = origGameState.m_tweenActions;"
+        CBF_MAIN_ANDROID "${CBF_MAIN_ANDROID}")
+    string(REPLACE
+        "std::swap(m_gameState, origGameState);"
+        "m_gameState = origGameState;"
+        CBF_MAIN_ANDROID "${CBF_MAIN_ANDROID}")
+
+    set(CBF_ANDROID_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY "${CBF_ANDROID_GEN_DIR}")
+    set(CBF_ANDROID_MAIN "${CBF_ANDROID_GEN_DIR}/main_android.cpp")
+    file(WRITE "${CBF_ANDROID_MAIN}" "${CBF_MAIN_ANDROID}")
+
+    list(FILTER SOURCES EXCLUDE REGEX ".*/src/main\\.cpp$")
+    list(APPEND SOURCES "${CBF_ANDROID_MAIN}")
+endif()
+
 # Set up the mod binary
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE src)
