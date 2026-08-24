@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -343,6 +344,31 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
   player = nullptr;
 }
 
+static void resetFakePlayerTransientState(PlayerObject *player) {
+  if (!player)
+    return;
+
+  player->m_isDead = false;
+  player->m_playEffects = false;
+
+  if (player->m_collisionLogTop)
+    player->m_collisionLogTop->removeAllObjects();
+  if (player->m_collisionLogBottom)
+    player->m_collisionLogBottom->removeAllObjects();
+  if (player->m_collisionLogLeft)
+    player->m_collisionLogLeft->removeAllObjects();
+  if (player->m_collisionLogRight)
+    player->m_collisionLogRight->removeAllObjects();
+  if (player->m_touchingRings)
+    player->m_touchingRings->removeAllObjects();
+  if (player->m_waveTrail && player->m_waveTrail->m_pointArray)
+    player->m_waveTrail->m_pointArray->removeAllObjects();
+  if (player->m_regularTrail)
+    player->m_regularTrail->stopStroke();
+  if (player->m_shipStreak)
+    player->m_shipStreak->stopStroke();
+}
+
 class $modify(MyBGL, GJBaseGameLayer) {
   struct CameraState {
     float cameraFlip;
@@ -532,6 +558,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerState p2;
     PlayerObject *m_fakePlayer1 = nullptr;
     PlayerObject *m_fakePlayer2 = nullptr;
+    std::uint64_t m_attemptGeneration = 0;
     bool m_enableSolidCollisions = true;
     double m_teleportYOffset = 0.0;
     PredictionGameStateSnapshot m_gameStateSnapshot;
@@ -699,6 +726,19 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    auto &trajectory = Bot::get()->trajectory();
+
+    // Let the real death/retry lifecycle own this frame.
+    if (m_playerDied) {
+      trajectory.deactivateAllRemembered();
+      m_fields->p1.steps = 0;
+      m_fields->p2.steps = 0;
+      GJBaseGameLayer::visit();
+      return;
+    }
+
+    const std::uint64_t attemptGeneration = m_fields->m_attemptGeneration;
+
     // Every visual prediction in this visit must target the same instant.
     // Reading the clock again after player simulation made the camera predict
     // farther than the players, with the mismatch varying by frame workload.
@@ -721,8 +761,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool origPlayerDied = m_playerDied;
     bool hasP1 = m_player1 != nullptr;
     bool hasP2 = m_player2 != nullptr;
-    auto &trajectory = Bot::get()->trajectory();
-
     if (m_objectLayer) {
       if (hasP1) {
         if (!m_fields->m_fakePlayer1 ||
@@ -1123,29 +1161,45 @@ class $modify(MyBGL, GJBaseGameLayer) {
         g_extrapolating = true;
         this->updateCamera(dtFloat);
         g_extrapolating = false;
+
+        // Restore gameplay containers before other visit hooks can run.
+#ifdef GEODE_IS_ANDROID
+        m_gameState.m_tweenActions = m_fields->m_originalTweens;
+        m_gameState.m_activatedObjectIDs =
+            m_fields->m_activatedObjectIDsSnapshot;
+#else
+        m_gameState.m_tweenActions.swap(m_fields->m_filteredTweens);
+        m_gameState.m_activatedObjectIDs.swap(
+            m_fields->m_activatedObjectIDsSnapshot);
+#endif
       }
     }
 
+    // Only predicted node transforms remain installed for rendering.
+    m_playerDied = origPlayerDied;
+    m_resetActiveObjects = origResetActiveObjects;
+
     GJBaseGameLayer::visit();
 
-    if (cameraExtrapolated) {
+    // Never restore snapshots from an attempt reset inside another visit hook.
+    if (m_fields->m_attemptGeneration != attemptGeneration) {
+      releaseNodeStates(savedGroundChildren1);
+      releaseNodeStates(savedGroundChildren2);
+      releaseNodeStates(savedMiddleground);
+      m_fields->m_pendingClicks1.clear();
+      m_fields->m_pendingClicks2.clear();
+      m_fields->m_filteredTweens.clear();
 #ifdef GEODE_IS_ANDROID
-      m_gameState.m_tweenActions = m_fields->m_originalTweens;
-#else
-      m_gameState.m_tweenActions.swap(m_fields->m_filteredTweens);
+      m_fields->m_originalTweens.clear();
 #endif
+      m_fields->p1.steps = 0;
+      m_fields->p2.steps = 0;
+      return;
+    }
+
+    if (cameraExtrapolated) {
       restoreCameraState(camState);
       origGameState.restore(m_gameState);
-#ifdef GEODE_IS_ANDROID
-      m_gameState.m_activatedObjectIDs =
-          m_fields->m_activatedObjectIDsSnapshot;
-#else
-      // This is the only non-tween game-state container touched by the
-      // original camera rollback path. Keep its exact rollback semantics while
-      // avoiding a second tree copy on desktop platforms.
-      m_gameState.m_activatedObjectIDs.swap(
-          m_fields->m_activatedObjectIDsSnapshot);
-#endif
 
       if (hasObj) {
         m_objectLayer->setPosition(origObj);
@@ -1196,9 +1250,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     }
 
-    m_playerDied = origPlayerDied;
-
-    m_resetActiveObjects = origResetActiveObjects;
     if (!cameraExtrapolated) {
       m_gameState.m_cameraOffset = origCameraOffset;
       m_gameState.m_cameraZoom = origCameraZoom;
@@ -1413,8 +1464,23 @@ class $modify(MyPlayLayer, PlayLayer) {
   void resetExtrapolation() {
     auto myGL = static_cast<MyBGL *>(static_cast<GJBaseGameLayer *>(this));
     if (myGL) {
-      myGL->m_fields->p1 = PlayerState();
-      myGL->m_fields->p2 = PlayerState();
+      auto fields = myGL->m_fields.self();
+      ++fields->m_attemptGeneration;
+      fields->p1 = PlayerState();
+      fields->p2 = PlayerState();
+      fields->m_enableSolidCollisions = true;
+      fields->m_teleportYOffset = 0.0;
+      fields->m_pendingClicks1.clear();
+      fields->m_pendingClicks2.clear();
+      fields->m_activatedObjectIDsSnapshot.clear();
+      fields->m_filteredTweens.clear();
+#ifdef GEODE_IS_ANDROID
+      fields->m_originalTweens.clear();
+#endif
+
+      resetFakePlayerTransientState(fields->m_fakePlayer1);
+      resetFakePlayerTransientState(fields->m_fakePlayer2);
+      Bot::get()->trajectory().deactivateAllRemembered();
     }
   }
 
