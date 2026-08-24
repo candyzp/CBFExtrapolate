@@ -201,7 +201,6 @@ static bool extrapolateDartSlideFromConfirmedMotion(
 static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   if (!fake || !real)
     return;
-  fake->copyAttributes(real);
 
   fake->setPosition(real->getPosition());
   fake->setRotation(real->getRotation());
@@ -493,57 +492,32 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float scaleY;
     bool visible;
     unsigned char opacity;
+    unsigned int childCount;
   };
 
-  void saveNodePositionsRecursive(cocos2d::CCNode *node,
-                                  std::vector<SavedNodeState> &saved) {
+  unsigned int nodeChildCount(cocos2d::CCNode *node) {
+    auto children = node ? node->getChildren() : nullptr;
+    return children ? children->count() : 0;
+  }
+
+  void buildNodeStateCache(cocos2d::CCNode *node,
+                           std::vector<SavedNodeState> &saved) {
     if (!node)
       return;
     auto rgba = dynamic_cast<cocos2d::CCRGBAProtocol *>(node);
     saved.push_back({node, node->getParent(), rgba, node->getPosition(),
                      node->getRotation(), node->getScaleX(), node->getScaleY(),
-                     node->isVisible(), rgba ? rgba->getOpacity() : 255});
+                     node->isVisible(),
+                     static_cast<unsigned char>(rgba ? rgba->getOpacity() : 255),
+                     nodeChildCount(node)});
 
-    // A retained snapshot cannot become a dangling pointer if the normal
-    // visit removes a ground child. This replaces the second recursive walk
-    // and per-node unordered_set lookup previously used for crash safety.
     node->retain();
     if (node->getChildren()) {
       for (auto *child :
            geode::cocos::CCArrayExt<cocos2d::CCNode *>(node->getChildren())) {
-        saveNodePositionsRecursive(child, saved);
+        buildNodeStateCache(child, saved);
       }
     }
-  }
-
-  void restoreAndReleaseNodeStates(std::vector<SavedNodeState> &saved) {
-    for (const auto &state : saved) {
-      // If the node was directly removed or reparented during the real visit,
-      // leave its new state alone. Retaining it still makes release safe.
-      if (state.node->getParent() == state.parent) {
-        auto position = state.node->getPosition();
-        if (position.x != state.position.x || position.y != state.position.y) {
-          state.node->setPosition(state.position);
-        }
-        if (state.node->getRotation() != state.rotation) {
-          state.node->setRotation(state.rotation);
-        }
-        if (state.node->getScaleX() != state.scaleX) {
-          state.node->setScaleX(state.scaleX);
-        }
-        if (state.node->getScaleY() != state.scaleY) {
-          state.node->setScaleY(state.scaleY);
-        }
-        if (state.node->isVisible() != state.visible) {
-          state.node->setVisible(state.visible);
-        }
-        if (state.rgba && state.rgba->getOpacity() != state.opacity) {
-          state.rgba->setOpacity(state.opacity);
-        }
-      }
-      state.node->release();
-    }
-    saved.clear();
   }
 
   void releaseNodeStates(std::vector<SavedNodeState> &saved) {
@@ -551,6 +525,55 @@ class $modify(MyBGL, GJBaseGameLayer) {
       state.node->release();
     }
     saved.clear();
+  }
+
+  void prepareNodeStates(cocos2d::CCNode *root,
+                         std::vector<SavedNodeState> &saved) {
+    bool valid = root ? !saved.empty() && saved.front().node == root
+                      : saved.empty();
+
+    if (valid) {
+      for (auto &state : saved) {
+        if (state.node->getParent() != state.parent ||
+            nodeChildCount(state.node) != state.childCount) {
+          valid = false;
+          break;
+        }
+
+        state.position = state.node->getPosition();
+        state.rotation = state.node->getRotation();
+        state.scaleX = state.node->getScaleX();
+        state.scaleY = state.node->getScaleY();
+        state.visible = state.node->isVisible();
+        state.opacity = state.rgba ? state.rgba->getOpacity() : 255;
+      }
+    }
+
+    if (!valid) {
+      releaseNodeStates(saved);
+      buildNodeStateCache(root, saved);
+    }
+  }
+
+  void restoreNodeStates(const std::vector<SavedNodeState> &saved) {
+    for (const auto &state : saved) {
+      if (state.node->getParent() != state.parent)
+        continue;
+
+      auto position = state.node->getPosition();
+      if (position.x != state.position.x || position.y != state.position.y)
+        state.node->setPosition(state.position);
+      if (state.node->getRotation() != state.rotation)
+        state.node->setRotation(state.rotation);
+      if (state.node->getScaleX() != state.scaleX)
+        state.node->setScaleX(state.scaleX);
+      if (state.node->getScaleY() != state.scaleY)
+        state.node->setScaleY(state.scaleY);
+      if (state.node->isVisible() != state.visible)
+        state.node->setVisible(state.visible);
+      if (state.rgba && state.rgba->getOpacity() != state.opacity)
+        state.rgba->setOpacity(state.opacity);
+    }
   }
 
   struct Fields {
@@ -802,13 +825,10 @@ class $modify(MyBGL, GJBaseGameLayer) {
     auto &savedGroundChildren1 = m_fields->m_savedGroundChildren1;
     auto &savedGroundChildren2 = m_fields->m_savedGroundChildren2;
     auto &savedMiddleground = m_fields->m_savedMiddleground;
-    savedGroundChildren1.clear();
-    savedGroundChildren2.clear();
-    savedMiddleground.clear();
 
-    saveNodePositionsRecursive(m_groundLayer, savedGroundChildren1);
-    saveNodePositionsRecursive(m_groundLayer2, savedGroundChildren2);
-    saveNodePositionsRecursive(m_middleground, savedMiddleground);
+    prepareNodeStates(m_groundLayer, savedGroundChildren1);
+    prepareNodeStates(m_groundLayer2, savedGroundChildren2);
+    prepareNodeStates(m_middleground, savedMiddleground);
 
     float origObjRot = m_objectLayer ? m_objectLayer->getRotation() : 0.f;
     if (hasObj) {
@@ -1210,9 +1230,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
       restoreGroundState(m_groundLayer, groundState1);
       restoreGroundState(m_groundLayer2, groundState2);
 
-      restoreAndReleaseNodeStates(savedGroundChildren1);
-      restoreAndReleaseNodeStates(savedGroundChildren2);
-      restoreAndReleaseNodeStates(savedMiddleground);
+      restoreNodeStates(savedGroundChildren1);
+      restoreNodeStates(savedGroundChildren2);
+      restoreNodeStates(savedMiddleground);
 
       if (hasBg) {
         m_background->setPosition(origBgPos);
@@ -1233,10 +1253,6 @@ class $modify(MyBGL, GJBaseGameLayer) {
         m_aboveShaderObjectLayer->setScaleY(origAboveShaderObjScaleY);
         m_aboveShaderObjectLayer->setRotation(origAboveShaderObjRot);
       }
-    } else {
-      releaseNodeStates(savedGroundChildren1);
-      releaseNodeStates(savedGroundChildren2);
-      releaseNodeStates(savedMiddleground);
     }
 
     if (hasP1 && simulatedP1) {
