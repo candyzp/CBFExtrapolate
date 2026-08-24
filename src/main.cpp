@@ -218,10 +218,15 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_xVelocityRelated2 = real->m_xVelocityRelated2;
   fake->m_gravity = real->m_gravity;
   fake->m_gravityMod = real->m_gravityMod;
+  fake->m_yStart = real->m_yStart;
   fake->m_speedMultiplier = real->m_speedMultiplier;
   fake->m_playerSpeed = real->m_playerSpeed;
   fake->m_vehicleSize = real->m_vehicleSize;
   fake->m_isUpsideDown = real->m_isUpsideDown;
+  fake->m_isAccelerating = real->m_isAccelerating;
+  fake->m_maybeIsBoosted = real->m_maybeIsBoosted;
+  fake->m_isLocked = real->m_isLocked;
+  fake->m_controlsDisabled = real->m_controlsDisabled;
   fake->setFlipY(real->isFlipY());
   fake->setFlipX(real->isFlipX());
 
@@ -239,6 +244,9 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_lastGroundObject = real->m_lastGroundObject;
   fake->m_preLastGroundObject = real->m_preLastGroundObject;
   fake->m_maybeLastGroundObject = real->m_maybeLastGroundObject;
+  fake->m_lastGroundedPos = real->m_lastGroundedPos;
+  fake->m_lastLandTime = real->m_lastLandTime;
+  fake->m_lastFlipTime = real->m_lastFlipTime;
   fake->m_collidingWithSlopeId = real->m_collidingWithSlopeId;
   fake->m_slopeFlipGravityRelated = real->m_slopeFlipGravityRelated;
   fake->m_potentialSlopeMap = real->m_potentialSlopeMap;
@@ -272,14 +280,22 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_touchedRing = real->m_touchedRing;
   fake->m_touchedCustomRing = real->m_touchedCustomRing;
   fake->m_touchedGravityPortal = real->m_touchedGravityPortal;
+  fake->m_ringJumpRelated = real->m_ringJumpRelated;
+  fake->m_padRingRelated = real->m_padRingRelated;
   fake->m_ringRelatedSet = real->m_ringRelatedSet;
   fake->m_lastActivatedPortal = real->m_lastActivatedPortal;
+  fake->m_hasEverHitRing = real->m_hasEverHitRing;
+  fake->m_wasTeleported = real->m_wasTeleported;
 
   fake->m_holdingLeft = real->m_holdingLeft;
   fake->m_holdingRight = real->m_holdingRight;
   fake->m_holdingButtons = real->m_holdingButtons;
   fake->m_jumpBuffered = real->m_jumpBuffered;
+  fake->m_stateJumpBuffered = real->m_stateJumpBuffered;
+  fake->m_stateRingJump = real->m_stateRingJump;
+  fake->m_stateRingJump2 = real->m_stateRingJump2;
   fake->m_wasJumpBuffered = real->m_wasJumpBuffered;
+  fake->m_wasRobotJump = real->m_wasRobotJump;
   fake->m_hasEverJumped = real->m_hasEverJumped;
   fake->m_isDashing = real->m_isDashing;
   fake->m_isDead = real->m_isDead;
