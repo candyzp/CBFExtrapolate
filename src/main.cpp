@@ -31,6 +31,18 @@ static bool g_extrapolating = false;
 
 static bool g_cbfSoftToggle = false;
 
+static constexpr double kPhysicsFramesPerSecond = 60.0;
+static constexpr double kPredictionStepFrames = 0.25;
+static constexpr double kMaxPredictionSeconds =
+    kPredictionStepFrames / kPhysicsFramesPerSecond;
+
+static double getPredictionSeconds(double renderTime, double lastTime) {
+  double elapsed = renderTime - lastTime;
+  if (!std::isfinite(elapsed))
+    return 0.0;
+  return std::clamp(elapsed, 0.0, kMaxPredictionSeconds);
+}
+
 $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
   listenForSettingChanges<bool>("soft-toggle",
@@ -170,13 +182,13 @@ static bool isSlidingOnDartBlock(PlayerObject *player) {
 static bool extrapolateDartSlideFromConfirmedMotion(
     PlayerObject *player, const PlayerState &state,
     const CCPoint &currentPos, const CCPoint &currentRobPos, double dtSeconds,
-    double timeScale, CCPoint &renderPos, CCPoint &renderRobPos) {
+    CCPoint &renderPos, CCPoint &renderRobPos) {
   if (!isSlidingOnDartBlock(player) || player->m_isOnSlope ||
       state.lastStepDt <= 0.0f) {
     return false;
   }
 
-  double renderFrames = dtSeconds * timeScale * 60.0;
+  double renderFrames = dtSeconds * kPhysicsFramesPerSecond;
   if (!std::isfinite(renderFrames)) {
     renderFrames = 0.0;
   }
@@ -889,13 +901,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
     auto extrapolatePlayer =
         [&](PlayerObject *player, PlayerState &state,
             std::vector<PlayerButtonCommand> &sortedClicks,
-            double tCurrent, double timeScale) {
+            double tCurrent) {
           double dtSeconds = tCurrent - state.lastTime;
           if (dtSeconds < 0.0)
             dtSeconds = 0.0;
 
           if (g_cbfSoftToggle && m_clickBetweenSteps) {
-            double stepDuration = (0.25 / 60.0) / timeScale;
+            double stepDuration =
+                kPredictionStepFrames / kPhysicsFramesPerSecond;
             for (auto &cmd : sortedClicks) {
               double elapsed = cmd.m_timestamp - state.lastTime;
               if (elapsed < 0.0)
@@ -921,7 +934,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
             double remaining = dtFrames;
-            double stepSize = 0.25;
+            double stepSize = kPredictionStepFrames;
 
             while (remaining > 0.0) {
               double currentStep = std::min(remaining, stepSize);
@@ -987,8 +1000,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
           for (const auto &cmd : sortedClicks) {
             if (cmd.m_timestamp > currentTime && cmd.m_timestamp < targetTime) {
-              double dt = (cmd.m_timestamp - currentTime) * timeScale;
-              double dtFrames = dt * 60.0;
+              double dtFrames = (cmd.m_timestamp - currentTime) *
+                                kPhysicsFramesPerSecond;
 
               updatePlayerSubstepped(dtFrames);
 
@@ -1003,8 +1016,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           }
 
           if (targetTime > currentTime) {
-            double dt = (targetTime - currentTime) * timeScale;
-            double dtFrames = dt * 60.0;
+            double dtFrames =
+                (targetTime - currentTime) * kPhysicsFramesPerSecond;
 
             updatePlayerSubstepped(dtFrames);
           }
@@ -1017,26 +1030,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasP1 && m_fields->m_fakePlayer1) {
       auto &state = m_fields->p1;
       if (state.lastTime != 0 && !dead) {
-        double tCurrent = renderTime;
-        double timeScale = m_gameState.m_timeWarp;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-            state.lastDt > 0.0001f) {
-          double diff = state.lastTime - state.prevTime;
-          if (diff > 0.001) {
-            timeScale = (state.lastDt / 60.0f) / diff;
-          }
-        }
-        if (!std::isfinite(timeScale) || timeScale <= 0.0) {
-          timeScale = 1.0;
-        }
-        double dtSeconds = tCurrent - state.lastTime;
-        if (dtSeconds < 0.0) {
-          dtSeconds = 0.0;
-        }
-        double maxDtSeconds = (0.25 / 60.0) / timeScale;
-        if (dtSeconds > maxDtSeconds) {
-          dtSeconds = maxDtSeconds;
-        }
+        double dtSeconds = getPredictionSeconds(renderTime, state.lastTime);
         double tCurrentClamped = state.lastTime + dtSeconds;
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
@@ -1048,8 +1042,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           CCPoint renderPos;
           CCPoint renderRobPos;
           if (!extrapolateDartSlideFromConfirmedMotion(
-                  m_player1, state, origP1, origP1Rob, dtSeconds, timeScale,
-                  renderPos, renderRobPos)) {
+                  m_player1, state, origP1, origP1Rob, dtSeconds, renderPos,
+                  renderRobPos)) {
             auto &pendingClicks = m_fields->m_pendingClicks1;
             pendingClicks.clear();
             if (hasCBF) {
@@ -1066,7 +1060,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
             syncFakePlayer(m_fields->m_fakePlayer1, m_player1);
             extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
-                              tCurrentClamped, timeScale);
+                              tCurrentClamped);
             renderPos = m_fields->m_fakePlayer1->getPosition();
             renderRobPos = m_fields->m_fakePlayer1->m_position;
           }
@@ -1080,26 +1074,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     if (hasP2 && m_fields->m_fakePlayer2 && m_gameState.m_isDualMode) {
       auto &state = m_fields->p2;
       if (state.lastTime != 0 && !dead) {
-        double tCurrent = renderTime;
-        double timeScale = m_gameState.m_timeWarp;
-        if (state.prevTime > 0.0001 && state.lastTime > state.prevTime &&
-            state.lastDt > 0.0001f) {
-          double diff = state.lastTime - state.prevTime;
-          if (diff > 0.001) {
-            timeScale = (state.lastDt / 60.0f) / diff;
-          }
-        }
-        if (!std::isfinite(timeScale) || timeScale <= 0.0) {
-          timeScale = 1.0;
-        }
-        double dtSeconds = tCurrent - state.lastTime;
-        if (dtSeconds < 0.0) {
-          dtSeconds = 0.0;
-        }
-        double maxDtSeconds = (0.25 / 60.0) / timeScale;
-        if (dtSeconds > maxDtSeconds) {
-          dtSeconds = maxDtSeconds;
-        }
+        double dtSeconds = getPredictionSeconds(renderTime, state.lastTime);
         double tCurrentClamped = state.lastTime + dtSeconds;
 
         if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
@@ -1111,8 +1086,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
           CCPoint renderPos;
           CCPoint renderRobPos;
           if (!extrapolateDartSlideFromConfirmedMotion(
-                  m_player2, state, origP2, origP2Rob, dtSeconds, timeScale,
-                  renderPos, renderRobPos)) {
+                  m_player2, state, origP2, origP2Rob, dtSeconds, renderPos,
+                  renderRobPos)) {
             auto &pendingClicks = m_fields->m_pendingClicks2;
             pendingClicks.clear();
             if (hasCBF) {
@@ -1129,7 +1104,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
             syncFakePlayer(m_fields->m_fakePlayer2, m_player2);
             extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
-                              tCurrentClamped, timeScale);
+                              tCurrentClamped);
             renderPos = m_fields->m_fakePlayer2->getPosition();
             renderRobPos = m_fields->m_fakePlayer2->m_position;
           }
@@ -1144,34 +1119,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
     CameraState camState;
 
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
-      double tCurrent = renderTime;
-      double timeScale = m_gameState.m_timeWarp;
-      if (m_fields->p1.prevTime > 0.0001 &&
-          m_fields->p1.lastTime > m_fields->p1.prevTime &&
-          m_fields->p1.lastDt > 0.0001f) {
-        double diff = m_fields->p1.lastTime - m_fields->p1.prevTime;
-        if (diff > 0.001) {
-          timeScale = (m_fields->p1.lastDt / 60.0f) / diff;
-        }
-      }
-      if (!std::isfinite(timeScale) || timeScale <= 0.0) {
-        timeScale = 1.0;
-      }
-      double dtSeconds = tCurrent - m_fields->p1.lastTime;
-      if (dtSeconds < 0.0) {
-        dtSeconds = 0.0;
-      }
-      double maxDtSeconds = (0.25 / 60.0) / timeScale;
-      if (dtSeconds > maxDtSeconds) {
-        dtSeconds = maxDtSeconds;
-      }
+      double dtSeconds =
+          getPredictionSeconds(renderTime, m_fields->p1.lastTime);
 
       if (dtSeconds >= 0.0 && dtSeconds < 2.0) {
         camState = saveCameraState();
         cameraExtrapolated = true;
 
-        double warpedDt = dtSeconds * timeScale;
-        float dtFloat = static_cast<float>(warpedDt);
+        float dtFloat = static_cast<float>(dtSeconds);
 
         auto &filteredTweens = m_fields->m_filteredTweens;
         filteredTweens.clear();
