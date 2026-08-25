@@ -59,6 +59,8 @@ void flipGravity(PlayerObject *player, bool gravity) {
       !GJBaseGameLayer::get()->m_levelSettings->m_twoPlayerMode) {
     auto p1 = player;
     auto p2 = Bot::get()->trajectory().getOtherPlayer(player);
+    if (!p2)
+      return;
     if (!(p1->m_isShip == p2->m_isShip && p1->m_isBall == p2->m_isBall &&
           p1->m_isBird == p2->m_isBird && p1->m_isSpider == p2->m_isSpider &&
           p1->m_isRobot == p2->m_isRobot && p1->m_isSwing == p2->m_isSwing)) {

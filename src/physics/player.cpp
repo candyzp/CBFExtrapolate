@@ -3,6 +3,9 @@
 
 #include <Geode/Geode.hpp>
 
+#include "bot/bot.hpp"
+#include "trajectory/trajectory.hpp"
+
 using namespace geode::prelude;
 
 namespace phys {
@@ -201,7 +204,11 @@ void ringJump(PlayerObject *player, RingObject *ring) {
   if (!ring)
     return;
 
-  if (player->m_ringRelatedSet.count(ring->m_uniqueID))
+  auto &trajectory = Bot::get()->trajectory();
+  auto realPlayer = trajectory.getRealPlayer(player);
+  if (player->m_ringRelatedSet.count(ring->m_uniqueID) ||
+      (realPlayer && realPlayer != player &&
+       realPlayer->m_ringRelatedSet.count(ring->m_uniqueID)))
     return;
 
   bool isCustomOrTeleportRing =

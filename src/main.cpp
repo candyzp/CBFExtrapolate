@@ -282,11 +282,19 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_collidedLeftMaxX = real->m_collidedLeftMaxX;
   fake->m_collidedRightMinX = real->m_collidedRightMinX;
 
-  fake->m_touchedRings = real->m_touchedRings;
+  // These containers can contain the whole attempt's activation history.
+  // Prediction only needs rings that are touching now; older entries are
+  // checked directly on the real player by the fake ring/pad handlers.
+  fake->m_touchedRings.clear();
   if (fake->m_touchingRings && real->m_touchingRings) {
     fake->m_touchingRings->removeAllObjects();
     for (unsigned int i = 0; i < real->m_touchingRings->count(); i++) {
-      fake->m_touchingRings->addObject(real->m_touchingRings->objectAtIndex(i));
+      auto object = real->m_touchingRings->objectAtIndex(i);
+      fake->m_touchingRings->addObject(object);
+      if (auto gameObject =
+              geode::cast::typeinfo_cast<GameObject *>(object)) {
+        fake->m_touchedRings.insert(gameObject->m_uniqueID);
+      }
     }
   }
   fake->m_touchedRing = real->m_touchedRing;
@@ -294,7 +302,7 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_touchedGravityPortal = real->m_touchedGravityPortal;
   fake->m_ringJumpRelated = real->m_ringJumpRelated;
   fake->m_padRingRelated = real->m_padRingRelated;
-  fake->m_ringRelatedSet = real->m_ringRelatedSet;
+  fake->m_ringRelatedSet.clear();
   fake->m_lastActivatedPortal = real->m_lastActivatedPortal;
   fake->m_hasEverHitRing = real->m_hasEverHitRing;
   fake->m_wasTeleported = real->m_wasTeleported;
@@ -329,7 +337,7 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   fake->m_stateFlipGravity = real->m_stateFlipGravity;
   fake->m_stateForce = real->m_stateForce;
   fake->m_stateForceVector = real->m_stateForceVector;
-  fake->m_jumpPadRelated = real->m_jumpPadRelated;
+  fake->m_jumpPadRelated.clear();
 
   fake->m_dashX = real->m_dashX;
   fake->m_dashY = real->m_dashY;
@@ -350,6 +358,28 @@ static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
 
 static bool isFakePlayer(PlayerObject *player);
 
+static void stopFakeNodeActions(cocos2d::CCNode *node) {
+  if (!node)
+    return;
+
+  if (node->numberOfRunningActions() > 0)
+    node->stopAllActions();
+
+  if (auto children = node->getChildren()) {
+    for (auto child :
+         geode::cocos::CCArrayExt<cocos2d::CCNode *>(children)) {
+      stopFakeNodeActions(child);
+    }
+  }
+}
+
+static void stopFakePlayerActions(PlayerObject *player) {
+  // Fake jumps, gravity flips, and mode switches start the same visual actions
+  // as a real player. The hidden tree never needs them, and leaving them in
+  // the global action manager makes work accumulate after every portal/orb.
+  stopFakeNodeActions(player);
+}
+
 static void cleanUpFakePlayer(PlayerObject *&player) {
   if (!player)
     return;
@@ -367,6 +397,12 @@ static void cleanUpFakePlayer(PlayerObject *&player) {
     Bot::get()->trajectory().unsafeInner()->m_fakePlayer2 = nullptr;
   }
 
+  // PlayerObject::create is retained once by us and once by its parent. Remove
+  // the hidden node as well as releasing our ownership so retired prediction
+  // players cannot keep actions running after a retry or replacement.
+  if (player->getParent()) {
+    player->removeFromParentAndCleanup(true);
+  }
   player->release();
   player = nullptr;
 }
@@ -375,8 +411,13 @@ static void resetFakePlayerTransientState(PlayerObject *player) {
   if (!player)
     return;
 
+  stopFakePlayerActions(player);
   player->m_isDead = false;
   player->m_playEffects = false;
+  player->m_touchedRings.clear();
+  player->m_ringRelatedSet.clear();
+  player->m_jumpPadRelated.clear();
+  player->m_potentialSlopeMap.clear();
 
   if (player->m_collisionLogTop)
     player->m_collisionLogTop->removeAllObjects();
@@ -613,7 +654,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool m_enableSolidCollisions = true;
     double m_teleportYOffset = 0.0;
     PredictionGameStateSnapshot m_gameStateSnapshot;
-    gd::map<std::pair<int, int>, int> m_activatedObjectIDsSnapshot;
+    gd::map<std::pair<int, int>, int> m_predictionActivatedObjectIDs;
+    gd::vector<GameObject *> m_predictionSolidCollisionObjects;
+    gd::vector<GameObject *> m_predictionHazardCollisionObjects;
     std::vector<SavedNodeState> m_savedGroundChildren1;
     std::vector<SavedNodeState> m_savedGroundChildren2;
     std::vector<SavedNodeState> m_savedMiddleground;
@@ -751,8 +794,43 @@ class $modify(MyBGL, GJBaseGameLayer) {
       player->m_isSecondPlayer = isPlayer2;
       player->m_playEffects = false;
       this->addChild(player);
+      stopFakePlayerActions(player);
     }
     return player;
+  }
+
+  void checkPredictionCollisions(PlayerObject *player, float dt) {
+    auto fields = m_fields.self();
+
+    const int solidCount = m_solidCollisionObjectsCount;
+    const int solidIndex = m_solidCollisionObjectsIndex;
+    const int hazardCount = m_hazardCollisionObjectsCount;
+    const int hazardIndex = m_hazardCollisionObjectsIndex;
+    auto player1CollisionBlock = m_player1CollisionBlock;
+    auto player2CollisionBlock = m_player2CollisionBlock;
+
+    // checkCollisions uses layer-owned vectors as temporary work buffers. Give
+    // fake physics its own reusable buffers so prediction cannot enlarge or
+    // leave counters in the live gameplay buffers across frames and retries.
+    m_solidCollisionObjects.swap(fields->m_predictionSolidCollisionObjects);
+    m_hazardCollisionObjects.swap(fields->m_predictionHazardCollisionObjects);
+    m_solidCollisionObjectsCount = 0;
+    m_solidCollisionObjectsIndex =
+        static_cast<int>(m_solidCollisionObjects.size());
+    m_hazardCollisionObjectsCount = 0;
+    m_hazardCollisionObjectsIndex =
+        static_cast<int>(m_hazardCollisionObjects.size());
+
+    this->checkCollisions(player, dt, true);
+
+    m_solidCollisionObjects.swap(fields->m_predictionSolidCollisionObjects);
+    m_hazardCollisionObjects.swap(fields->m_predictionHazardCollisionObjects);
+    m_solidCollisionObjectsCount = solidCount;
+    m_solidCollisionObjectsIndex = solidIndex;
+    m_hazardCollisionObjectsCount = hazardCount;
+    m_hazardCollisionObjectsIndex = hazardIndex;
+    m_player1CollisionBlock = player1CollisionBlock;
+    m_player2CollisionBlock = player2CollisionBlock;
   }
 
   void visit() override {
@@ -782,6 +860,8 @@ class $modify(MyBGL, GJBaseGameLayer) {
     // Let the real death/retry lifecycle own this frame.
     if (m_playerDied) {
       trajectory.deactivateAllRemembered();
+      resetFakePlayerTransientState(m_fields->m_fakePlayer1);
+      resetFakePlayerTransientState(m_fields->m_fakePlayer2);
       m_fields->p1.steps = 0;
       m_fields->p2.steps = 0;
       GJBaseGameLayer::visit();
@@ -799,8 +879,18 @@ class $modify(MyBGL, GJBaseGameLayer) {
     // can touch. Container-heavy trigger/effect state stays in place.
     auto &origGameState = m_fields->m_gameStateSnapshot;
     origGameState.save(m_gameState);
-    m_fields->m_activatedObjectIDsSnapshot =
+#ifdef GEODE_IS_ANDROID
+    m_fields->m_predictionActivatedObjectIDs =
         m_gameState.m_activatedObjectIDs;
+#else
+    // Fake collision uses the player's unique ID, so it does not need the
+    // real players' touch-history map. Swap in an empty reusable map instead
+    // of copying an attempt-long tree every rendered frame.
+    m_fields->m_predictionActivatedObjectIDs.clear();
+    m_gameState.m_activatedObjectIDs.swap(
+        m_fields->m_predictionActivatedObjectIDs);
+    m_gameState.m_activatedObjectIDs.clear();
+#endif
     auto origCameraOffset = m_gameState.m_cameraOffset;
     auto origCameraZoom = m_gameState.m_cameraZoom;
     auto origCameraAngle = m_gameState.m_cameraAngle;
@@ -969,7 +1059,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
               double yVelBefore = player->m_yVelocity;
               m_fields->m_teleportYOffset = 0.0;
 
-              this->checkCollisions(player, delta, true);
+              checkPredictionCollisions(player, delta);
               phys::checkSpawnObjects(this, player);
               if (!player->m_isOnSlope && player->m_stateDartSlide <= 0) {
                 float yAfter = player->getPositionY();
@@ -1115,6 +1205,13 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
+    // PlayerObject::update can start visual actions without activating an
+    // object (for example, from an input or animation transition). Drain both
+    // hidden trees after prediction so none can accumulate in the shared
+    // action manager during a long attempt.
+    stopFakePlayerActions(m_fields->m_fakePlayer1);
+    stopFakePlayerActions(m_fields->m_fakePlayer2);
+
     bool cameraExtrapolated = false;
     CameraState camState;
 
@@ -1153,18 +1250,25 @@ class $modify(MyBGL, GJBaseGameLayer) {
         this->updateCamera(dtFloat);
         g_extrapolating = false;
 
-        // Restore gameplay containers before other visit hooks can run.
+        // Restore tween state before other visit hooks can run.
 #ifdef GEODE_IS_ANDROID
         m_gameState.m_tweenActions = m_fields->m_originalTweens;
-        m_gameState.m_activatedObjectIDs =
-            m_fields->m_activatedObjectIDsSnapshot;
 #else
         m_gameState.m_tweenActions.swap(m_fields->m_filteredTweens);
-        m_gameState.m_activatedObjectIDs.swap(
-            m_fields->m_activatedObjectIDsSnapshot);
 #endif
       }
     }
+
+    // Discard any fake-player touch entries and put the real attempt's map
+    // back before rendering or another mod can observe prediction state.
+#ifdef GEODE_IS_ANDROID
+    m_gameState.m_activatedObjectIDs =
+        m_fields->m_predictionActivatedObjectIDs;
+#else
+    m_gameState.m_activatedObjectIDs.clear();
+    m_gameState.m_activatedObjectIDs.swap(
+        m_fields->m_predictionActivatedObjectIDs);
+#endif
 
     // Only predicted node transforms remain installed for rendering.
     m_playerDied = origPlayerDied;
@@ -1459,14 +1563,29 @@ class $modify(MyPlayLayer, PlayLayer) {
       fields->m_teleportYOffset = 0.0;
       fields->m_pendingClicks1.clear();
       fields->m_pendingClicks2.clear();
-      fields->m_activatedObjectIDsSnapshot.clear();
+      fields->m_predictionActivatedObjectIDs.clear();
+      fields->m_predictionSolidCollisionObjects.clear();
+      fields->m_predictionHazardCollisionObjects.clear();
       fields->m_filteredTweens.clear();
 #ifdef GEODE_IS_ANDROID
       fields->m_originalTweens.clear();
 #endif
 
+      auto releaseCachedNodes = [](auto &states) {
+        for (const auto &state : states) {
+          state.node->release();
+        }
+        states.clear();
+      };
+      releaseCachedNodes(fields->m_savedGroundChildren1);
+      releaseCachedNodes(fields->m_savedGroundChildren2);
+      releaseCachedNodes(fields->m_savedMiddleground);
+
+      // Keep the expensive PlayerObject trees cached across retries, but reset
+      // everything that can grow or keep work scheduled between attempts.
       resetFakePlayerTransientState(fields->m_fakePlayer1);
       resetFakePlayerTransientState(fields->m_fakePlayer2);
+      g_extrapolating = false;
       Bot::get()->trajectory().deactivateAllRemembered();
     }
   }
@@ -1490,37 +1609,27 @@ class $modify(MyPlayLayer, PlayLayer) {
 
   void resetLevel() override {
     PlayLayer::resetLevel();
-    if (!g_softToggle) {
-      resetExtrapolation();
-    }
+    resetExtrapolation();
   }
 
   void loadFromCheckpoint(CheckpointObject *object) {
     PlayLayer::loadFromCheckpoint(object);
-    if (!g_softToggle) {
-      resetExtrapolation();
-    }
+    resetExtrapolation();
   }
 
   void resetLevelFromStart() {
     PlayLayer::resetLevelFromStart();
-    if (!g_softToggle) {
-      resetExtrapolation();
-    }
+    resetExtrapolation();
   }
 
   void delayedResetLevel() {
     PlayLayer::delayedResetLevel();
-    if (!g_softToggle) {
-      resetExtrapolation();
-    }
+    resetExtrapolation();
   }
 
   void fullReset() {
     PlayLayer::fullReset();
-    if (!g_softToggle) {
-      resetExtrapolation();
-    }
+    resetExtrapolation();
   }
 };
 

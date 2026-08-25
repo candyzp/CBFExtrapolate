@@ -441,25 +441,27 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
       player->m_lastActivatedPortal = object;
       activateForTrajectory(obj, player);
       phys::flipGravity(player, true);
-      (void)player->getObjectRect();
+      playerRect = player->getObjectRect();
       break;
     case GameObjectType::NormalGravityPortal:
       player->m_lastPortalPos = object->getPosition();
       player->m_lastActivatedPortal = object;
       activateForTrajectory(obj, player);
       phys::flipGravity(player, false);
-      (void)player->getObjectRect();
+      playerRect = player->getObjectRect();
       break;
     case GameObjectType::GravityTogglePortal:
       player->m_lastPortalPos = object->getPosition();
       player->m_lastActivatedPortal = object;
       activateForTrajectory(obj, player);
       phys::flipGravity(player, !player->m_isUpsideDown);
+      playerRect = player->getObjectRect();
       break;
     case GameObjectType::TeleportPortal:
       if (pl->canBeActivatedByPlayer(player, (EffectGameObject *)object)) {
         phys::teleportPlayer(pl, (TeleportPortalObject *)object, player);
         activateForTrajectory(obj, player);
+        playerRect = player->getObjectRect();
       }
       break;
     case GameObjectType::Slope:
@@ -472,7 +474,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
                                                false, true);
       }
 
-      (void)player->getObjectRect();
+      playerRect = player->getObjectRect();
       break;
     case GameObjectType::CustomRing:
     case GameObjectType::DashRing:
@@ -494,6 +496,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
           !player->m_isSwing && !((RingObject *)object)->m_isSpawnOnly) {
         phys::ringJump(player, (RingObject *)object);
         activateForTrajectory(obj, player);
+        playerRect = player->getObjectRect();
       }
       break;
     case GameObjectType::YellowJumpPad:
@@ -501,6 +504,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
     case GameObjectType::RedJumpPad:
     case GameObjectType::SpiderPad:
       phys::bumpPlayerFromGJBGL(pl, player, obj);
+      playerRect = player->getObjectRect();
       break;
     case GameObjectType::GravityPad: {
       bool isFacingDown = false;
@@ -523,6 +527,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
         phys::propellPlayer(player, 0.8, false, 10);
         phys::flipGravity(player, !isFacingDown);
         player->m_padRingRelated = true;
+        playerRect = player->getObjectRect();
       }
       break;
     }
@@ -533,6 +538,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
         activateForTrajectory(obj, player);
 
         phys::togglePlayerScale(player, true);
+        playerRect = player->getObjectRect();
       }
       break;
     case GameObjectType::RegularSizePortal:
@@ -542,6 +548,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
         activateForTrajectory(obj, player);
 
         phys::togglePlayerScale(player, false);
+        playerRect = player->getObjectRect();
       }
       break;
     case GameObjectType::Special:
@@ -561,11 +568,17 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
         ForceBlockGameObject *forceBlock = (ForceBlockGameObject *)object;
         int forceID = forceBlock->m_forceID;
         if (forceID > 0) {
-          if (player->m_jumpPadRelated.count(forceID)) {
-            if (player->m_jumpPadRelated.at(forceID)) {
-              break;
-            }
-          }
+          auto wasForceApplied = [forceID](PlayerObject *target) {
+            if (!target)
+              return false;
+            auto it = target->m_jumpPadRelated.find(forceID);
+            return it != target->m_jumpPadRelated.end() && it->second;
+          };
+          auto realPlayer = trajectory.getRealPlayer(player);
+          if (wasForceApplied(player) ||
+              (realPlayer != player && wasForceApplied(realPlayer)))
+            break;
+
           player->m_jumpPadRelated.insert({forceID, true});
         }
 
@@ -585,7 +598,9 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
     case GameObjectType::SpiderPortal:
     case GameObjectType::SwingPortal:
     case GameObjectType::RobotPortal:
-      activatingPortal(pl, player, obj);
+      if (activatingPortal(pl, player, obj)) {
+        playerRect = player->getObjectRect();
+      }
       break;
     case GameObjectType::EnterEffectObject:
     case GameObjectType::Modifier:
@@ -597,6 +612,7 @@ void collisionCheckObjects(GJBaseGameLayer *pl, PlayerObject *player,
         phys::triggerObject(obj, pl, player);
         // }, 1);
       }
+      playerRect = player->getObjectRect();
       break;
     default:
       break;

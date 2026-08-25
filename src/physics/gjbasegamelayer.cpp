@@ -5,21 +5,15 @@
 
 namespace phys {
 cocos2d::CCArray *getGroup(GJBaseGameLayer *pl, int groupID) {
-  // i'm too lazy to wait for geode to merge a bindings commit so yea
-
   if (groupID < 0)
     groupID = 0;
   if (groupID > 9999)
     groupID = 9999;
 
-  cocos2d::CCArray *group = pl->m_groups.at(groupID);
-  if (!group) {
-    group = cocos2d::CCArray::create();
-    pl->m_groupDict->setObject(group, groupID);
-    pl->m_groups.at(groupID) = group;
-  }
-
-  return group;
+  // Prediction must not create groups in the live level. Missing target groups
+  // have no teleport destination, and creating them here made fake physics
+  // permanently grow the real level's dictionaries.
+  return pl->m_groups.at(groupID);
 }
 
 float redirectPlayerForce(PlayerObject *player, float force,
@@ -73,10 +67,11 @@ void teleportPlayer(GJBaseGameLayer *pl, TeleportPortalObject *object,
   }
   player->m_wasTeleported = true;
 
+  float teleportYOffset = object->m_teleportYOffset;
   if (object->m_orangePortal) {
     CCPoint bluePortalStartPos = object->getStartPos();
     CCPoint orangePortalStartPos = object->m_orangePortal->getStartPos();
-    object->m_teleportYOffset = orangePortalStartPos.y - bluePortalStartPos.y;
+    teleportYOffset = orangePortalStartPos.y - bluePortalStartPos.y;
   }
 
   cocos2d::CCPoint playerPos = player->getPosition();
@@ -85,21 +80,18 @@ void teleportPlayer(GJBaseGameLayer *pl, TeleportPortalObject *object,
     int targetGroupID = object->m_targetGroupID;
     if (targetGroupID > 0) {
       cocos2d::CCArray *group = getGroup(pl, targetGroupID);
-      int groupLength = group->count();
-
-      float someFloat;
+      int groupLength = group ? static_cast<int>(group->count()) : 0;
 
       if (groupLength > 0) {
-        if (groupLength == 1) {
-          someFloat = 0.0;
-        } else {
-          someFloat = (float)rand() / (float)RAND_MAX;
-          if (someFloat == 1.0)
-            someFloat = 0.0;
-        }
-
-        destination = (TeleportPortalObject *)group->objectAtIndex(
-            (int)(someFloat * groupLength));
+        // Do not consume the game's global RNG from a render-only prediction.
+        // A stable per-tick choice avoids both cross-frame flicker and changing
+        // the destination the real physics will select on its next step.
+        auto seed = static_cast<unsigned int>(object->m_uniqueID) * 2654435761u;
+        seed ^= static_cast<unsigned int>(pl->m_gameState.m_commandIndex) *
+                2246822519u;
+        seed ^= player->m_isSecondPlayer ? 3266489917u : 668265263u;
+        destination = static_cast<TeleportPortalObject *>(
+            group->objectAtIndex(seed % static_cast<unsigned int>(groupLength)));
       }
     }
   }
@@ -111,7 +103,7 @@ void teleportPlayer(GJBaseGameLayer *pl, TeleportPortalObject *object,
     player->m_lastActivatedPortal = object;
     player->m_fallStartY = 0.0;
     if (object->m_objectID == 0x2eb) {
-      float dy = object->m_teleportYOffset;
+      float dy = teleportYOffset;
       portalPos = object->getRealPosition();
 
       destinationPos =
