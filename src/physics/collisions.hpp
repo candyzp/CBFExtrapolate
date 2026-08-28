@@ -19,11 +19,12 @@ void activateForTrajectory(EffectGameObject *obj, PlayerObject *player);
 inline bool activatingPortal(GJBaseGameLayer *pl, PlayerObject *player,
                              EffectGameObject *portal) {
   if (pl->canBeActivatedByPlayer(player, portal)) {
-    if (Bot::get()->trajectory().playerHasActivated(player, portal)) {
+    auto &trajectory = Bot::get()->trajectory();
+    if (trajectory.playerHasActivated(player, portal)) {
       return false;
     }
 
-    if (!Bot::get()->trajectory().isFakePlayer(player)) {
+    if (!trajectory.isFakePlayer(player)) {
       pl->playerWillSwitchMode(player, portal);
     }
 
@@ -44,12 +45,22 @@ inline bool activatingPortal(GJBaseGameLayer *pl, PlayerObject *player,
          player->m_isRobot) ||
         ((portal->m_objectType == GameObjectType::CubePortal) &&
          (!(player->m_isShip || player->m_isBall || player->m_isBird ||
-            player->m_isDart || player->m_isSpider || player->m_isSwing)));
+            player->m_isDart || player->m_isSpider || player->m_isSwing ||
+            player->m_isRobot)));
+
+    // Prediction does not need to replay a full mode switch when a portal
+    // selects the mode the fake player already has. The old path still called
+    // switchedToMode/toggle* here, which could restart hidden actions and do
+    // unnecessary sprite/state work every render near a same-mode portal.
+    if (isTheSame) {
+      player->m_lastPortalPos = portal->getPosition();
+      player->m_lastActivatedPortal = portal;
+      activateForTrajectory(portal, player);
+      return false;
+    }
 
     cocos2d::CCPoint position = player->getPosition();
-    // if (portal->m_objectType == GameObjectType::CubePortal) {
     player->switchedToMode(portal->m_objectType);
-    // }
 
     switch (portal->m_objectType) {
     case GameObjectType::ShipPortal:
@@ -85,7 +96,7 @@ inline bool activatingPortal(GJBaseGameLayer *pl, PlayerObject *player,
     player->m_lastActivatedPortal = portal;
     activateForTrajectory(portal, player);
 
-    return !isTheSame;
+    return true;
   }
 
   return false;
