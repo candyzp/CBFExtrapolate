@@ -210,6 +210,31 @@ static bool extrapolateDartSlideFromConfirmedMotion(
   return true;
 }
 
+static void stabilizeGroundedRenderY(PlayerObject *realPlayer,
+                                     PlayerObject *fakePlayer,
+                                     const CCPoint &confirmedPos,
+                                     const CCPoint &confirmedRobPos,
+                                     CCPoint &renderPos,
+                                     CCPoint &renderRobPos) {
+  if (!realPlayer || !fakePlayer)
+    return;
+
+  constexpr double kGroundedVelocityEpsilon = 0.05;
+  if (!realPlayer->m_isOnGround || !fakePlayer->m_isOnGround ||
+      realPlayer->m_isOnSlope || fakePlayer->m_isOnSlope ||
+      std::abs(realPlayer->m_yVelocity) > kGroundedVelocityEpsilon ||
+      std::abs(fakePlayer->m_yVelocity) > kGroundedVelocityEpsilon) {
+    return;
+  }
+
+  // Fake collision integration can leave a resting player a fraction of a
+  // unit above the confirmed floor. Keep horizontal extrapolation, but pin the
+  // visual Y to the real grounded state while both timelines still agree that
+  // the player is resting. A predicted jump immediately stops satisfying this.
+  renderPos.y = confirmedPos.y;
+  renderRobPos.y = confirmedRobPos.y;
+}
+
 static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
   if (!fake || !real)
     return;
@@ -652,6 +677,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerObject *m_fakePlayer2 = nullptr;
     std::uint64_t m_attemptGeneration = 0;
     bool m_enableSolidCollisions = true;
+    bool m_deathCleanupDone = false;
     double m_teleportYOffset = 0.0;
     PredictionGameStateSnapshot m_gameStateSnapshot;
     gd::map<std::pair<int, int>, int> m_predictionActivatedObjectIDs;
@@ -857,16 +883,22 @@ class $modify(MyBGL, GJBaseGameLayer) {
 
     auto &trajectory = Bot::get()->trajectory();
 
-    // Let the real death/retry lifecycle own this frame.
+    // Let the real death/retry lifecycle own this frame. The cleanup itself is
+    // intentionally one-shot; repeating recursive action/container cleanup on
+    // every rendered death frame caused a visible hitch around quick restarts.
     if (m_playerDied) {
-      trajectory.deactivateAllRemembered();
-      resetFakePlayerTransientState(m_fields->m_fakePlayer1);
-      resetFakePlayerTransientState(m_fields->m_fakePlayer2);
+      if (!m_fields->m_deathCleanupDone) {
+        trajectory.deactivateAllRemembered();
+        resetFakePlayerTransientState(m_fields->m_fakePlayer1);
+        resetFakePlayerTransientState(m_fields->m_fakePlayer2);
+        m_fields->m_deathCleanupDone = true;
+      }
       m_fields->p1.steps = 0;
       m_fields->p2.steps = 0;
       GJBaseGameLayer::visit();
       return;
     }
+    m_fields->m_deathCleanupDone = false;
 
     const std::uint64_t attemptGeneration = m_fields->m_attemptGeneration;
 
@@ -1153,6 +1185,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
                               tCurrentClamped);
             renderPos = m_fields->m_fakePlayer1->getPosition();
             renderRobPos = m_fields->m_fakePlayer1->m_position;
+            stabilizeGroundedRenderY(m_player1, m_fields->m_fakePlayer1,
+                                     origP1, origP1Rob, renderPos,
+                                     renderRobPos);
           }
 
           m_player1->CCNode::setPosition(renderPos);
@@ -1197,6 +1232,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
                               tCurrentClamped);
             renderPos = m_fields->m_fakePlayer2->getPosition();
             renderRobPos = m_fields->m_fakePlayer2->m_position;
+            stabilizeGroundedRenderY(m_player2, m_fields->m_fakePlayer2,
+                                     origP2, origP2Rob, renderPos,
+                                     renderRobPos);
           }
 
           m_player2->CCNode::setPosition(renderPos);
@@ -1560,6 +1598,7 @@ class $modify(MyPlayLayer, PlayLayer) {
       fields->p1 = PlayerState();
       fields->p2 = PlayerState();
       fields->m_enableSolidCollisions = true;
+      fields->m_deathCleanupDone = false;
       fields->m_teleportYOffset = 0.0;
       fields->m_pendingClicks1.clear();
       fields->m_pendingClicks2.clear();
@@ -1571,15 +1610,10 @@ class $modify(MyPlayLayer, PlayLayer) {
       fields->m_originalTweens.clear();
 #endif
 
-      auto releaseCachedNodes = [](auto &states) {
-        for (const auto &state : states) {
-          state.node->release();
-        }
-        states.clear();
-      };
-      releaseCachedNodes(fields->m_savedGroundChildren1);
-      releaseCachedNodes(fields->m_savedGroundChildren2);
-      releaseCachedNodes(fields->m_savedMiddleground);
+      // Keep the ground/middleground snapshot cache across ordinary retries.
+      // prepareNodeStates validates parents and child counts before reuse and
+      // rebuilds lazily if reset actually changed the tree. Avoiding a full
+      // release + recursive retain pass here removes a large restart spike.
 
       // Keep the expensive PlayerObject trees cached across retries, but reset
       // everything that can grow or keep work scheduled between attempts.
