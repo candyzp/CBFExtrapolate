@@ -35,6 +35,12 @@
 			"description": "Disables CBF Extrapolate features.",
 			"type": "bool",
 			"default": false
+		},
+		"performance-debug": {
+			"name": "Performance Debug",
+			"description": "Logs CBF render cost and spikes for performance testing. Leave off during normal play.",
+			"type": "bool",
+			"default": false
 		}
 	}
 }
