@@ -50,6 +50,14 @@ void Trajectory::rememberActivatedObject(cocos2d::CCObject *obj,
     return;
 
   const auto key = reinterpret_cast<uintptr_t>(obj);
+
+  // The same trigger is commonly reported repeatedly during one prediction
+  // slice. The newest entry is therefore the overwhelmingly common duplicate.
+  // Check it first so we avoid walking the whole tiny history in that case,
+  // while retaining the full lookup for non-consecutive duplicates.
+  if (!activated->empty() && activated->back() == key)
+    return;
+
   if (std::find(activated->begin(), activated->end(), key) ==
       activated->end()) {
     activated->push_back(key);
@@ -66,9 +74,13 @@ bool Trajectory::playerHasActivated(PlayerObject *player,
 
   const auto key = reinterpret_cast<uintptr_t>(obj);
   if (player == m_fakePlayer1) {
+    if (!m_activatedObjectsP1.empty() && m_activatedObjectsP1.back() == key)
+      return true;
     return std::find(m_activatedObjectsP1.begin(), m_activatedObjectsP1.end(),
                      key) != m_activatedObjectsP1.end();
   } else if (player == m_fakePlayer2) {
+    if (!m_activatedObjectsP2.empty() && m_activatedObjectsP2.back() == key)
+      return true;
     return std::find(m_activatedObjectsP2.begin(), m_activatedObjectsP2.end(),
                      key) != m_activatedObjectsP2.end();
   }
