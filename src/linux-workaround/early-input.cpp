@@ -4,7 +4,10 @@
 #include "timestamp.hpp"
 #include <atomic>
 #include <cstdint>
+
+#ifdef GEODE_IS_WINDOWS
 #include <xinput.h>
+#endif
 
 using namespace geode::prelude;
 
