@@ -926,6 +926,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
     bool cameraExtrapolated = false;
     CameraState camState;
 
+#ifndef GEODE_IS_IOS
+    // On iOS, keep camera/ground fades on the real game update path.
+    // Calling updateCamera speculatively during render can invoke the
+    // GJGroundLayer fade hooks from inside the prediction pass, which is
+    // unstable on iOS and can also suppress or duplicate the native fade.
     if (hasObj && !dead && hasP1 && m_fields->p1.lastTime != 0) {
       double advanceSeconds = renderAdvanceSeconds();
 
@@ -953,6 +958,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         g_extrapolating = false;
       }
     }
+#endif
 
     GJBaseGameLayer::visit();
 
@@ -1304,6 +1310,7 @@ class $modify(MyEnhancedGameObject, EnhancedGameObject) {
   }
 };
 
+#ifndef GEODE_IS_IOS
 class $modify(MyGJGroundLayer, GJGroundLayer) {
   void fadeInGround(float duration) {
     if (g_extrapolating) {
@@ -1319,3 +1326,4 @@ class $modify(MyGJGroundLayer, GJGroundLayer) {
     GJGroundLayer::fadeOutGround(duration);
   }
 };
+#endif
