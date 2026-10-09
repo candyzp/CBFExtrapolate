@@ -687,7 +687,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
       if (!std::isfinite(frameDt) || frameDt < 0.0) {
         frameDt = 0.0;
       }
-      double advance = m_extraDelta + std::max(frameDt, 0.5 * quantum);
+      // iOS touch input can produce a visible one-frame vertical snap when
+      // prediction leads by an entire display interval. Keep a half-display
+      // interval of look-ahead so the icon and camera still extrapolate,
+      // without pushing the first rendered jump a whole frame into the future.
+#ifdef GEODE_IS_IOS
+      double frameLead = std::max(frameDt * 0.5, 0.5 * quantum);
+#else
+      double frameLead = std::max(frameDt, 0.5 * quantum);
+#endif
+      double advance = m_extraDelta + frameLead;
       if (!std::isfinite(advance) || advance < 0.0) {
         advance = 0.0;
       } else if (advance > kMaxPredictSeconds) {
@@ -983,8 +992,51 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
+    // A wave's HardStreak is updated during the real game step, while its
+    // PlayerObject is moved to the predicted position just for rendering.
+    // Rebuild the trailing tip at that same position for this draw only.
+    // Restore the original tip/mesh immediately afterward so the native
+    // trail retains its actual gameplay path and fade actions.
+#ifdef GEODE_IS_IOS
+    struct WaveTipPreview {
+      HardStreak *trail = nullptr;
+      CCPoint originalTip = {0.f, 0.f};
+    };
+    auto predictWaveTip = [](PlayerObject *player, bool simulated) {
+      WaveTipPreview preview;
+      if (!simulated || !player || !player->m_isDart ||
+          !player->m_waveTrail)
+        return preview;
+      auto *trail = player->m_waveTrail;
+      if (!trail->m_drawStreak || !trail->m_pointArray ||
+          trail->m_pointArray->count() == 0)
+        return preview;
+      CCPoint predicted = player->getPosition();
+      if (trail->m_currentPoint.equals(predicted))
+        return preview;
+      preview.trail = trail;
+      preview.originalTip = trail->m_currentPoint;
+      trail->m_currentPoint = predicted;
+      trail->updateStroke(0.f);
+      return preview;
+    };
+    auto restoreWaveTip = [](const WaveTipPreview &preview) {
+      if (!preview.trail)
+        return;
+      preview.trail->m_currentPoint = preview.originalTip;
+      preview.trail->updateStroke(0.f);
+    };
+    WaveTipPreview waveTip1 = predictWaveTip(m_player1, simulatedP1);
+    WaveTipPreview waveTip2 = predictWaveTip(m_player2, simulatedP2);
+#endif
+
     hideFakePlayers();
     GJBaseGameLayer::visit();
+
+#ifdef GEODE_IS_IOS
+    restoreWaveTip(waveTip1);
+    restoreWaveTip(waveTip2);
+#endif
 
     if (cameraExtrapolated) {
       restoreCameraState(camState);
