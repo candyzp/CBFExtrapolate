@@ -1,10 +1,14 @@
 #include "early-input.hpp"
 
-#include "linuxeventcodes.hpp"
 #include "timestamp.hpp"
 #include <atomic>
 #include <cstdint>
+#include <deque>
+
+#ifdef GEODE_IS_WINDOWS
+#include "linuxeventcodes.hpp"
 #include <xinput.h>
+#endif
 
 using namespace geode::prelude;
 
@@ -274,16 +278,15 @@ static void addEarlyClick(std::vector<PlayerButtonCommand> &out,
   }
 }
 
+static std::deque<PlayerButtonCommand> g_ringClicks;
+static constexpr double RING_CLICK_KEEP_SECONDS = 2.0;
+
 // ported from CBF's linuxCheckInputs(), main difference is that
 // we don't move the tail
-static double collectRingClicks(std::vector<PlayerButtonCommand> &out,
-                                double lastTime, double sampleSeconds,
-                                double stepSeconds, bool player2Block,
-                                bool isTwoPlayer) {
-  double targetOffset = sampleSeconds;
+static void drainRing() {
   SharedMemory *shm = g_cbfRing.shm;
   if (!shm) {
-    return lastTime + targetOffset;
+    return;
   }
 
   static std::unordered_map<int, cocos2d::enumKeyCodes> linuxToCCKey = {
@@ -480,14 +483,30 @@ static double collectRingClicks(std::vector<PlayerButtonCommand> &out,
     input.m_timestamp = g_cbfRing.toLocal(ev.time);
     input.m_isPlayer2 = !player1;
 
+    g_ringClicks.push_back(input);
+  }
+
+  g_cbfRing.cursor = t;
+
+  double cutoff = getCurrentTimestamp() - RING_CLICK_KEEP_SECONDS;
+  while (!g_ringClicks.empty() && g_ringClicks.front().m_timestamp < cutoff) {
+    g_ringClicks.pop_front();
+  }
+}
+
+static double collectRingClicks(std::vector<PlayerButtonCommand> &out,
+                                double lastTime, double sampleSeconds,
+                                double stepSeconds, bool player2Block,
+                                bool isTwoPlayer) {
+  double targetOffset = sampleSeconds;
+  drainRing();
+  for (const auto &input : g_ringClicks) {
     if (isCbfClickTarget(input.m_isPlayer2, player2Block, isTwoPlayer)) {
       addEarlyClick(out, targetOffset, lastTime, sampleSeconds, stepSeconds,
                     input.m_button, input.m_isPlayer2, input.m_isPush,
                     input.m_timestamp);
     }
   }
-
-  g_cbfRing.cursor = t;
   return lastTime + targetOffset;
 }
 

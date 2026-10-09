@@ -1,4 +1,5 @@
 #include "bot/bot.hpp"
+#include "gamestate-snapshot.hpp"
 #include "linux-workaround/early-input.hpp"
 #include "physics/collisions.hpp"
 #include "physics/gjbasegamelayer.hpp"
@@ -21,11 +22,20 @@ using namespace geode::prelude;
 
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
+static bool g_predictFrame = true;
+
+static constexpr double kMaxPredictSeconds = 1.0;
 
 $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
   listenForSettingChanges<bool>("soft-toggle",
                                 [](bool value) { g_softToggle = value; });
+
+  g_predictFrame = Mod::get()->getSettingValue<std::string>(
+                       "prediction-mode") != "Physics Step";
+  listenForSettingChanges<std::string>(
+      "prediction-mode",
+      [](std::string value) { g_predictFrame = value != "Physics Step"; });
 
   earlyInputSetup();
 }
@@ -399,6 +409,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
     PlayerObject *m_fakePlayer2 = nullptr;
     bool m_enableSolidCollisions = true;
     double m_teleportYOffset = 0.0;
+    double m_frameDt = 0.0;
 
     ~Fields() {
       cleanUpFakePlayer(m_fakePlayer1);
@@ -473,6 +484,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
   }
 
   void update(float dt) override {
+    m_fields->m_frameDt = dt;
     auto playLayer = geode::cast::typeinfo_cast<PlayLayer *>(this);
     bool isPlatformer = (m_player1 && m_player1->m_isPlatformer) ||
                         (m_player2 && m_player2->m_isPlatformer);
@@ -520,6 +532,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
+    auto hideFakePlayers = [&] {
+      if (m_fields->m_fakePlayer1)
+        m_fields->m_fakePlayer1->setVisible(false);
+      if (m_fields->m_fakePlayer2)
+        m_fields->m_fakePlayer2->setVisible(false);
+    };
+    hideFakePlayers();
+
     bool isPlatformer = (m_player1 && m_player1->m_isPlatformer) ||
                         (m_player2 && m_player2->m_isPlatformer);
 
@@ -535,7 +555,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return;
     }
 
-    GJGameState origGameState = m_gameState;
+    GameStateSnapshot origGameState(m_gameState);
     auto origTweenActions = m_gameState.m_tweenActions;
     auto origCameraOffset = m_gameState.m_cameraOffset;
     auto origCameraZoom = m_gameState.m_cameraZoom;
@@ -664,6 +684,22 @@ class $modify(MyBGL, GJBaseGameLayer) {
         timeWarp = 1.0;
       }
       double quantum = std::min(timeWarp, 1.0) / 240.0;
+      if (g_predictFrame) {
+        if (m_resumeTimer > 0) {
+          return 0.0;
+        }
+        double frameDt = m_fields->m_frameDt;
+        if (!std::isfinite(frameDt) || frameDt < 0.0) {
+          frameDt = 0.0;
+        }
+        double advance = m_extraDelta + std::max(frameDt, 0.5 * quantum);
+        if (!std::isfinite(advance) || advance < 0.0) {
+          advance = 0.0;
+        } else if (advance > kMaxPredictSeconds) {
+          advance = kMaxPredictSeconds;
+        }
+        return advance;
+      }
       double advance = m_extraDelta + 0.5 * quantum;
       if (!std::isfinite(advance) || advance < 0.0) {
         advance = 0.0;
@@ -673,13 +709,17 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return advance;
     };
 
-    // length of one engine step, in the same units as renderAdvanceSeconds() / timeScale.
+    // early-click window, in the same units as renderAdvanceSeconds() / timeScale.
     auto renderStepSeconds = [&](double timeScale) -> double {
       double timeWarp = std::isfinite(m_gameState.m_timeWarp) ? m_gameState.m_timeWarp : 1.0;
       if (timeWarp <= 0.0) {
         timeWarp = 1.0;
       }
-      return (std::min(timeWarp, 1.0) / 240.0) / timeScale;
+      double step = (std::min(timeWarp, 1.0) / 240.0) / timeScale;
+      if (g_predictFrame) {
+        return std::max(step, renderAdvanceSeconds() / timeScale);
+      }
+      return step;
     };
 
     auto extrapolatePlayer =
@@ -714,12 +754,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
           double targetTime = state.lastTime + dtSeconds;
           state.isDead = false;
 
-          // one step right before the game render, exactly to the segment that ends at the next input (or at the render sample)
-          auto updatePlayerSubstepped = [&](double dtFrames) {
-            if (dtFrames <= 0.0) {
-              return;
-            }
-
+          auto updatePlayerStep = [&](double dtFrames) {
             float delta = static_cast<float>(dtFrames);
 
             m_fields->m_enableSolidCollisions = true;
@@ -774,6 +809,16 @@ class $modify(MyBGL, GJBaseGameLayer) {
             }
 
             player->m_isDead = false;
+          };
+
+          auto updatePlayerSubstepped = [&](double dtFrames) {
+            constexpr double kStepFrames = 0.25;
+            double remaining = dtFrames;
+            while (remaining > 1e-9) {
+              double chunk = std::min(remaining, kStepFrames);
+              updatePlayerStep(chunk);
+              remaining -= chunk;
+            }
           };
 
           for (const auto &cmd : sortedClicks) {
@@ -954,11 +999,12 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
+    hideFakePlayers();
     GJBaseGameLayer::visit();
 
     if (cameraExtrapolated) {
       restoreCameraState(camState);
-      m_gameState = origGameState;
+      origGameState.restore(m_gameState);
 
       if (hasObj) {
         m_objectLayer->setPosition(origObj);

@@ -36,6 +36,13 @@
 			"type": "bool",
 			"default": false
 		},
+		"prediction-mode": {
+			"name": "Prediction Mode",
+			"description": "<cy>Display Frame</c>: predicts where the player will be when the frame is shown (up to one frame ahead, works at any FPS).\n<cy>Physics Step</c>: only predicts up to one physics step (1/240s) ahead, the pre-2.4.1 behavior.",
+			"type": "string",
+			"default": "Display Frame",
+			"one-of": ["Display Frame", "Physics Step"]
+		},
 		"wine-cbf-workaround": {
 			"name": "Wine CBF Workaround",
 			"description": "Read the input CBF's Linux helper captures (its Wine workaround path) so early clicks show in the frame being drawn. Requires Click Between Frames v1.5.0.",
