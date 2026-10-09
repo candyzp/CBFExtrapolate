@@ -1,113 +1,75 @@
 #pragma once
 
 #include <Geode/Geode.hpp>
-#include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstring>
 #include <memory>
 
-// every non-trivially-copyable member of GJGameState must be listed here
-#define CBFE_GAMESTATE_CONTAINERS(X)                                           \
-  X(m_spawnChannelRelated0)                                                    \
-  X(m_spawnChannelRelated1)                                                    \
-  X(m_tweenActions)                                                            \
-  X(m_gameObjectPhysics)                                                       \
-  X(m_unkVecFloat1)                                                            \
-  X(m_activatedObjectIDs)                                                      \
-  X(m_stateObjects)                                                            \
-  X(m_unkMapPairGJGameEventIntVectorEventTriggerInstance)                      \
-  X(m_unkMapPairGJGameEventIntInt)                                             \
-  X(m_enterEffectInstanceVectors)                                              \
-  X(m_exitEffectInstanceVectors)                                               \
-  X(m_enterChannelMap)                                                         \
-  X(m_exitChannelMap)                                                          \
-  X(m_moveEffectInstances)                                                     \
-  X(m_rotateEffectInstances)                                                   \
-  X(m_scaleEffectInstances)                                                    \
-  X(m_fadeEffectInstances)                                                     \
-  X(m_tintEffectInstances)                                                     \
-  X(m_unsortedAreaEffects)                                                     \
-  X(m_advanceFollowInstances)                                                  \
-  X(m_dynamicMoveActions)                                                      \
-  X(m_dynamicRotateActions)                                                    \
-  X(m_unkUMap8)                                                                \
-  X(m_proximityVolumeRelated)                                                  \
-  X(m_songChannelStates)                                                       \
-  X(m_songTriggerStateVectors)                                                 \
-  X(m_sfxTriggerStates)
-
+// GJGameState can't be copied normally (bindings put a CCPoint in a union),
+// so plain fields are copied as raw bytes and the containers are rebuilt.
 class GameStateSnapshot {
 public:
   explicit GameStateSnapshot(const GJGameState &src) {
-    std::memcpy(m_storage, &src, sizeof(GJGameState));
-#define CBFE_COPY(m) std::construct_at(&state()->m, src.m);
-    CBFE_GAMESTATE_CONTAINERS(CBFE_COPY)
-#undef CBFE_COPY
+    copy(*saved(), src);
   }
 
-  ~GameStateSnapshot() {
-#define CBFE_DESTROY(m) std::destroy_at(&state()->m);
-    CBFE_GAMESTATE_CONTAINERS(CBFE_DESTROY)
-#undef CBFE_DESTROY
-  }
+  ~GameStateSnapshot() { destroyContainers(*saved()); }
 
   GameStateSnapshot(const GameStateSnapshot &) = delete;
   GameStateSnapshot &operator=(const GameStateSnapshot &) = delete;
 
   void restore(GJGameState &dst) const {
-    auto *dstBytes = reinterpret_cast<std::byte *>(&dst);
-    size_t pos = 0;
-    for (const auto &range : containerRanges()) {
-      if (range.offset > pos) {
-        std::memcpy(dstBytes + pos, m_storage + pos, range.offset - pos);
-      }
-      pos = std::max(pos, range.offset + range.size);
-    }
-    if (pos < sizeof(GJGameState)) {
-      std::memcpy(dstBytes + pos, m_storage + pos, sizeof(GJGameState) - pos);
-    }
-#define CBFE_ASSIGN(m) dst.m = state()->m;
-    CBFE_GAMESTATE_CONTAINERS(CBFE_ASSIGN)
-#undef CBFE_ASSIGN
+    destroyContainers(dst);
+    copy(dst, *saved());
   }
 
 private:
-  struct Range {
-    size_t offset;
-    size_t size;
-  };
-
-#define CBFE_COUNT(m) +1
-  static constexpr size_t kContainerCount =
-      0 CBFE_GAMESTATE_CONTAINERS(CBFE_COUNT);
-#undef CBFE_COUNT
-
-  const std::array<Range, kContainerCount> &containerRanges() const {
-    static const auto ranges = [this] {
-      std::array<Range, kContainerCount> out{};
-      size_t i = 0;
-      auto *base = reinterpret_cast<const std::byte *>(state());
-#define CBFE_RANGE(m)                                                          \
-  out[i++] = {static_cast<size_t>(                                             \
-                  reinterpret_cast<const std::byte *>(&state()->m) - base),    \
-              sizeof(state()->m)};
-      CBFE_GAMESTATE_CONTAINERS(CBFE_RANGE)
-#undef CBFE_RANGE
-      std::sort(out.begin(), out.end(),
-                [](const Range &a, const Range &b) {
-                  return a.offset < b.offset;
-                });
-      return out;
-    }();
-    return ranges;
+  // every container member of GJGameState must be listed here
+  template <class F> static void forEachContainer(F &&f) {
+    f(&GJGameState::m_spawnChannelRelated0);
+    f(&GJGameState::m_spawnChannelRelated1);
+    f(&GJGameState::m_tweenActions);
+    f(&GJGameState::m_gameObjectPhysics);
+    f(&GJGameState::m_unkVecFloat1);
+    f(&GJGameState::m_activatedObjectIDs);
+    f(&GJGameState::m_stateObjects);
+    f(&GJGameState::m_unkMapPairGJGameEventIntVectorEventTriggerInstance);
+    f(&GJGameState::m_unkMapPairGJGameEventIntInt);
+    f(&GJGameState::m_enterEffectInstanceVectors);
+    f(&GJGameState::m_exitEffectInstanceVectors);
+    f(&GJGameState::m_enterChannelMap);
+    f(&GJGameState::m_exitChannelMap);
+    f(&GJGameState::m_moveEffectInstances);
+    f(&GJGameState::m_rotateEffectInstances);
+    f(&GJGameState::m_scaleEffectInstances);
+    f(&GJGameState::m_fadeEffectInstances);
+    f(&GJGameState::m_tintEffectInstances);
+    f(&GJGameState::m_unsortedAreaEffects);
+    f(&GJGameState::m_advanceFollowInstances);
+    f(&GJGameState::m_dynamicMoveActions);
+    f(&GJGameState::m_dynamicRotateActions);
+    f(&GJGameState::m_unkUMap8);
+    f(&GJGameState::m_proximityVolumeRelated);
+    f(&GJGameState::m_songChannelStates);
+    f(&GJGameState::m_songTriggerStateVectors);
+    f(&GJGameState::m_sfxTriggerStates);
   }
 
-  GJGameState *state() {
-    return std::launder(reinterpret_cast<GJGameState *>(m_storage));
+  // `to` must not hold live containers
+  static void copy(GJGameState &to, const GJGameState &from) {
+    std::memcpy(static_cast<void *>(&to), &from, sizeof(GJGameState));
+    forEachContainer([&](auto member) {
+      std::construct_at(&(to.*member), from.*member);
+    });
   }
-  const GJGameState *state() const {
-    return std::launder(reinterpret_cast<const GJGameState *>(m_storage));
+
+  static void destroyContainers(GJGameState &s) {
+    forEachContainer([&](auto member) { std::destroy_at(&(s.*member)); });
+  }
+
+  GJGameState *saved() const {
+    return std::launder(
+        reinterpret_cast<GJGameState *>(const_cast<std::byte *>(m_storage)));
   }
 
   alignas(GJGameState) std::byte m_storage[sizeof(GJGameState)];
