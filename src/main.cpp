@@ -58,6 +58,11 @@ struct PlayerState {
   double prog = 0;
   double tickTime = 0;
   bool isDead = false;
+#ifdef GEODE_IS_IOS
+  // Button state at the last simulated tick, before queued future touches.
+  bool jumpBufferedAtLastStep = false;
+  bool jumpHeldAtLastStep = false;
+#endif
 };
 
 static void syncFakePlayer(PlayerObject *fake, PlayerObject *real) {
@@ -698,6 +703,14 @@ class $modify(MyBGL, GJBaseGameLayer) {
       return advance;
     };
 
+#ifdef GEODE_IS_IOS
+    // The fake wave's sampled future path, not a displacement of the old tip.
+    std::vector<CCPoint> predictedWavePath1;
+    std::vector<CCPoint> predictedWavePath2;
+    predictedWavePath1.reserve(16);
+    predictedWavePath2.reserve(16);
+#endif
+
     // early-click window, in the same units as renderAdvanceSeconds() / timeScale.
     auto renderStepSeconds = [&](double timeScale) -> double {
       double timeWarp = std::isfinite(m_gameState.m_timeWarp) ? m_gameState.m_timeWarp : 1.0;
@@ -711,7 +724,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
     auto extrapolatePlayer =
         [&](PlayerObject *player, PlayerState &state,
             const std::vector<PlayerButtonCommand> &pendingClicks,
-            double tCurrent, double timeScale) {
+            double tCurrent, double timeScale
+#ifdef GEODE_IS_IOS
+            , std::vector<CCPoint> *predictedWavePath
+#endif
+            ) {
           double dtSeconds = tCurrent - state.lastTime;
           if (dtSeconds < 0.0)
             dtSeconds = 0.0;
@@ -733,6 +750,68 @@ class $modify(MyBGL, GJBaseGameLayer) {
               [](const PlayerButtonCommand &a, const PlayerButtonCommand &b) {
                 return a.m_timestamp < b.m_timestamp;
               });
+
+#ifdef GEODE_IS_IOS
+          // The real player can register a queued touch between its last
+          // physics step and this draw. Starting the fake from the already
+          // modified button state makes a cube jump BEFORE the command's
+          // timestamp and creates a one-frame upward pop.
+          // Restore the input state captured at the real physics step, then
+          // let the existing timestamp-ordered command replay change it.
+          bool hasUpcomingJumpCommand = std::any_of(
+              sortedClicks.begin(), sortedClicks.end(),
+              [&](const PlayerButtonCommand &cmd) {
+                return cmd.m_button == PlayerButton::Jump &&
+                       cmd.m_timestamp > state.lastTime &&
+                       cmd.m_timestamp < tCurrent;
+              });
+          if (hasUpcomingJumpCommand) {
+            player->m_jumpBuffered = state.jumpBufferedAtLastStep;
+            player->m_holdingButtons[static_cast<int>(PlayerButton::Jump)] =
+                state.jumpHeldAtLastStep;
+          }
+
+          if (predictedWavePath) {
+            predictedWavePath->clear();
+            if (player->m_isDart)
+              predictedWavePath->push_back(player->getPosition());
+          }
+
+          // Keep actual future corners from physics rather than drawing one
+          // straight connector from the old wave to its predicted icon.
+          auto recordWaveSample = [&] {
+            if (!predictedWavePath || !player->m_isDart)
+              return;
+            CCPoint point = player->getPosition();
+            if (!std::isfinite(point.x) || !std::isfinite(point.y))
+              return;
+            if (predictedWavePath->empty()) {
+              predictedWavePath->push_back(point);
+              return;
+            }
+            auto &last = predictedWavePath->back();
+            CCPoint step = point - last;
+            float stepLengthSq = step.x * step.x + step.y * step.y;
+            if (stepLengthSq <= 0.0001f)
+              return;
+            if (predictedWavePath->size() >= 2) {
+              auto const &before = (*predictedWavePath)
+                  [predictedWavePath->size() - 2];
+              CCPoint previous = last - before;
+              float previousLengthSq =
+                  previous.x * previous.x + previous.y * previous.y;
+              float cross = previous.x * step.y - previous.y * step.x;
+              float dot = previous.x * step.x + previous.y * step.y;
+              if (dot > 0.f && previousLengthSq > 0.0001f &&
+                  cross * cross <=
+                      0.000225f * previousLengthSq * stepLengthSq) {
+                last = point;
+                return;
+              }
+            }
+            predictedWavePath->push_back(point);
+          };
+#endif
 
           g_extrapolating = true;
 
@@ -795,6 +874,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
             }
 
             player->m_isDead = false;
+#ifdef GEODE_IS_IOS
+            recordWaveSample();
+#endif
           };
 
           auto updatePlayerSubstepped = [&](double dtFrames) {
@@ -881,7 +963,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
           simulatedP1 = true;
 
           extrapolatePlayer(m_fields->m_fakePlayer1, state, pendingClicks,
-                            tCurrentClamped, timeScale);
+                            tCurrentClamped, timeScale
+#ifdef GEODE_IS_IOS
+                            , &predictedWavePath1
+#endif
+                            );
 
           auto fakePos = m_fields->m_fakePlayer1->getPosition();
           auto fakeRobPos = m_fields->m_fakePlayer1->m_position;
@@ -940,7 +1026,11 @@ class $modify(MyBGL, GJBaseGameLayer) {
           simulatedP2 = true;
 
           extrapolatePlayer(m_fields->m_fakePlayer2, state, pendingClicks,
-                            tCurrentClamped, timeScale);
+                            tCurrentClamped, timeScale
+#ifdef GEODE_IS_IOS
+                            , &predictedWavePath2
+#endif
+                            );
 
           auto fakePos = m_fields->m_fakePlayer2->getPosition();
           auto fakeRobPos = m_fields->m_fakePlayer2->m_position;
@@ -985,50 +1075,72 @@ class $modify(MyBGL, GJBaseGameLayer) {
       }
     }
 
-    // A wave's HardStreak is updated during the real game step, while its
-    // PlayerObject is moved to the predicted position just for rendering.
-    // Rebuild the trailing tip at that same position for this draw only.
-    // Restore the original tip/mesh immediately afterward so the native
-    // trail retains its actual gameplay path and fade actions.
+    // Draw the actual extrapolated wave trajectory, including predicted
+    // direction changes. Temporary anchor points are removed immediately
+    // after visit(): the live game trail is never permanently rewritten.
 #ifdef GEODE_IS_IOS
-    struct WaveTipPreview {
+    struct PredictedWavePreview {
       HardStreak *trail = nullptr;
       CCPoint originalTip = {0.f, 0.f};
+      unsigned int originalPointCount = 0;
     };
-    auto predictWaveTip = [](PlayerObject *player, bool simulated) {
-      WaveTipPreview preview;
-      if (!simulated || !player || !player->m_isDart ||
-          !player->m_waveTrail)
-        return preview;
-      auto *trail = player->m_waveTrail;
-      if (!trail->m_drawStreak || !trail->m_pointArray ||
-          trail->m_pointArray->count() == 0)
-        return preview;
-      CCPoint predicted = player->getPosition();
-      if (trail->m_currentPoint.equals(predicted))
-        return preview;
-      preview.trail = trail;
-      preview.originalTip = trail->m_currentPoint;
-      trail->m_currentPoint = predicted;
-      trail->updateStroke(0.f);
-      return preview;
-    };
-    auto restoreWaveTip = [](const WaveTipPreview &preview) {
+    auto previewPredictedWave =
+        [](PlayerObject *player, bool simulated,
+           const std::vector<CCPoint> &path) {
+          PredictedWavePreview preview;
+          if (!simulated || !player || !player->m_isDart ||
+              !player->m_waveTrail || path.size() < 2)
+            return preview;
+
+          auto *trail = player->m_waveTrail;
+          if (!trail->m_drawStreak || !trail->m_pointArray ||
+              trail->m_pointArray->count() == 0)
+            return preview;
+
+          preview.trail = trail;
+          preview.originalTip = trail->m_currentPoint;
+          preview.originalPointCount = trail->m_pointArray->count();
+
+          auto appendAnchor = [&](CCPoint point) {
+            auto *last = static_cast<PointNode *>(
+                trail->m_pointArray->lastObject());
+            if (!last || !last->m_point.equals(point))
+              trail->addPoint(point);
+          };
+
+          // The current real endpoint becomes the start of the future path.
+          appendAnchor(preview.originalTip);
+          // Each interior predicted corner follows the fake player's physics.
+          for (size_t i = 1; i + 1 < path.size(); ++i)
+            appendAnchor(path[i]);
+          trail->m_currentPoint = player->getPosition();
+          trail->updateStroke(0.f);
+          return preview;
+        };
+    auto restorePredictedWave = [](const PredictedWavePreview &preview) {
       if (!preview.trail)
         return;
-      preview.trail->m_currentPoint = preview.originalTip;
-      preview.trail->updateStroke(0.f);
+      auto *trail = preview.trail;
+      while (trail->m_pointArray &&
+             trail->m_pointArray->count() > preview.originalPointCount) {
+        trail->m_pointArray->removeObjectAtIndex(
+            trail->m_pointArray->count() - 1);
+      }
+      trail->m_currentPoint = preview.originalTip;
+      trail->updateStroke(0.f);
     };
-    WaveTipPreview waveTip1 = predictWaveTip(m_player1, simulatedP1);
-    WaveTipPreview waveTip2 = predictWaveTip(m_player2, simulatedP2);
+    PredictedWavePreview wavePreview1 = previewPredictedWave(
+        m_player1, simulatedP1, predictedWavePath1);
+    PredictedWavePreview wavePreview2 = previewPredictedWave(
+        m_player2, simulatedP2, predictedWavePath2);
 #endif
 
     hideFakePlayers();
     GJBaseGameLayer::visit();
 
 #ifdef GEODE_IS_IOS
-    restoreWaveTip(waveTip1);
-    restoreWaveTip(waveTip2);
+    restorePredictedWave(wavePreview1);
+    restorePredictedWave(wavePreview2);
 #endif
 
     if (cameraExtrapolated) {
@@ -1240,6 +1352,12 @@ class $modify(MyPlayer, PlayerObject) {
                                static_cast<float>(this->m_yVelocity));
       state->lastDt += dt;
       state->steps++;
+#ifdef GEODE_IS_IOS
+      state->jumpBufferedAtLastStep = m_jumpBuffered;
+      auto held = m_holdingButtons.find(static_cast<int>(PlayerButton::Jump));
+      state->jumpHeldAtLastStep =
+          held != m_holdingButtons.end() && held->second;
+#endif
     }
   }
 
