@@ -22,7 +22,6 @@ using namespace geode::prelude;
 
 static bool g_softToggle = false;
 static bool g_extrapolating = false;
-static bool g_predictFrame = true;
 
 static constexpr double kMaxPredictSeconds = 1.0;
 
@@ -30,12 +29,6 @@ $on_mod(Loaded) {
   g_softToggle = Mod::get()->getSettingValue<bool>("soft-toggle");
   listenForSettingChanges<bool>("soft-toggle",
                                 [](bool value) { g_softToggle = value; });
-
-  g_predictFrame = Mod::get()->getSettingValue<std::string>(
-                       "prediction-mode") != "Physics Step";
-  listenForSettingChanges<std::string>(
-      "prediction-mode",
-      [](std::string value) { g_predictFrame = value != "Physics Step"; });
 
   earlyInputSetup();
 }
@@ -676,35 +669,26 @@ class $modify(MyBGL, GJBaseGameLayer) {
     float xSign = (hasObj && m_objectLayer->getScaleX() < 0) ? -1 : 1;
     bool dead = m_playerDied;
 
-    // How far the render sample sits ahead of the last executed physics step, in game seconds. Long explaination below :
-    // getModifiedDelta() steps the game in whole quanta of min(timeWarp, 1) / 240 seconds and carries the un-simulated remainder in m_extraDelta, so after this frame's steps the simulated time is `m_extraDelta` behind the game clock (the clock only advances when the next frame's dt arrives, so it still reads the start of this frame). Stepping by that remainder alone would land exactly on the game clock, the start of this frame (and would go negative whenever the engine rounded up), so half a quantum (1/480 sec at normal speed) is added. The sample then advances by exactly one display interval per frame no matter how many steps ran, which is what removes the stutter at refresh rates that aren't factors or multiples of 240.
+    // How far the render sample sits ahead of the last executed physics step, in game seconds.
+    // After this frame's steps the simulated time is `m_extraDelta` behind the game clock, and the frame is shown about one frame interval after that.
     auto renderAdvanceSeconds = [&]() -> double {
+      if (m_resumeTimer > 0) {
+        return 0.0;
+      }
       double timeWarp = std::isfinite(m_gameState.m_timeWarp) ? m_gameState.m_timeWarp : 1.0;
       if (timeWarp <= 0.0) {
         timeWarp = 1.0;
       }
       double quantum = std::min(timeWarp, 1.0) / 240.0;
-      if (g_predictFrame) {
-        if (m_resumeTimer > 0) {
-          return 0.0;
-        }
-        double frameDt = m_fields->m_frameDt;
-        if (!std::isfinite(frameDt) || frameDt < 0.0) {
-          frameDt = 0.0;
-        }
-        double advance = m_extraDelta + std::max(frameDt, 0.5 * quantum);
-        if (!std::isfinite(advance) || advance < 0.0) {
-          advance = 0.0;
-        } else if (advance > kMaxPredictSeconds) {
-          advance = kMaxPredictSeconds;
-        }
-        return advance;
+      double frameDt = m_fields->m_frameDt;
+      if (!std::isfinite(frameDt) || frameDt < 0.0) {
+        frameDt = 0.0;
       }
-      double advance = m_extraDelta + 0.5 * quantum;
+      double advance = m_extraDelta + std::max(frameDt, 0.5 * quantum);
       if (!std::isfinite(advance) || advance < 0.0) {
         advance = 0.0;
-      } else if (advance > quantum) {
-        advance = quantum;
+      } else if (advance > kMaxPredictSeconds) {
+        advance = kMaxPredictSeconds;
       }
       return advance;
     };
@@ -716,10 +700,7 @@ class $modify(MyBGL, GJBaseGameLayer) {
         timeWarp = 1.0;
       }
       double step = (std::min(timeWarp, 1.0) / 240.0) / timeScale;
-      if (g_predictFrame) {
-        return std::max(step, renderAdvanceSeconds() / timeScale);
-      }
-      return step;
+      return std::max(step, renderAdvanceSeconds() / timeScale);
     };
 
     auto extrapolatePlayer =
