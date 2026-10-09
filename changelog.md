@@ -2,6 +2,10 @@
 - PR #14 by @notregoshi:
   - fix: resolve micro stutter at non-240-divisor refresh rates (90/100/144/165Hz) by sampling unsimulated remainder instead of CPU time
   - feat(linux): read CBF SHM in fake player for early input fetching to fix inconsistent input delay
+- Extrapolation now predicts up to the time the frame is shown instead of only one physics step (fixes no visible extrapolation at low FPS)
+- Fixed duplicate player icons appearing with the mod enabled
+- Fixed player 2 inputs being ignored by the Wine CBF workaround
+- Fixed build on non-Windows platforms
 
 # 2.3.6
 - Fixed some levels not working correctly
