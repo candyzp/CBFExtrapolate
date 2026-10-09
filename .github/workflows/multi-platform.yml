@@ -3,6 +3,8 @@ name: Build Geode Mod
 on:
   workflow_dispatch:
   push:
+    branches:
+      - ios-ground-vtable-hook-test-20261009
     tags:
       - "**"
 
