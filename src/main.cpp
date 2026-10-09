@@ -17,6 +17,9 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
+#ifdef GEODE_IS_IOS
+#include <Geode/utils/VMTHookManager.hpp>
+#endif
 
 using namespace geode::prelude;
 
@@ -1331,6 +1334,50 @@ class $modify(MyEnhancedGameObject, EnhancedGameObject) {
   }
 };
 
+#ifdef GEODE_IS_IOS
+// On iOS, fadeOutGround can be too short for an inline code hook.
+// Both fade methods are virtual, so hook their vtable entries instead.
+// Unlike the old clone-based workaround this does not touch camera
+// prediction, ground transforms, opacity, actions or rendering.
+class IOSGroundFadeVMTDetour : public GJGroundLayer {
+public:
+  void fadeInGround(float duration) override {
+    if (g_extrapolating)
+      return;
+    GJGroundLayer::fadeInGround(duration);
+  }
+
+  void fadeOutGround(float duration) override {
+    if (g_extrapolating)
+      return;
+    GJGroundLayer::fadeOutGround(duration);
+  }
+};
+
+class $modify(CBFIOSGroundFadeInstaller, GJGroundLayer) {
+  bool init(int groundID, int lineType) {
+    if (!GJGroundLayer::init(groundID, lineType))
+      return false;
+
+    // Install on the actual ground object after native construction.
+    // The manager reuses virtual hooks across instances of this class.
+    auto in = VMTHookManager::get()
+                  .addHook<&IOSGroundFadeVMTDetour::fadeInGround>(
+                      this, "CBF Extrapolate iOS ground fade in");
+    if (in.isErr()) {
+      log::error("iOS fade-in vtable hook failed: {}", in.unwrapErr());
+    }
+
+    auto out = VMTHookManager::get()
+                   .addHook<&IOSGroundFadeVMTDetour::fadeOutGround>(
+                       this, "CBF Extrapolate iOS ground fade out");
+    if (out.isErr()) {
+      log::error("iOS fade-out vtable hook failed: {}", out.unwrapErr());
+    }
+    return true;
+  }
+};
+#else
 class $modify(MyGJGroundLayer, GJGroundLayer) {
   void fadeInGround(float duration) {
     if (g_extrapolating) {
@@ -1346,3 +1393,4 @@ class $modify(MyGJGroundLayer, GJGroundLayer) {
     GJGroundLayer::fadeOutGround(duration);
   }
 };
+#endif
