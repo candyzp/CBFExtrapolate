@@ -687,16 +687,9 @@ class $modify(MyBGL, GJBaseGameLayer) {
       if (!std::isfinite(frameDt) || frameDt < 0.0) {
         frameDt = 0.0;
       }
-      // iOS touch input can produce a visible one-frame vertical snap when
-      // prediction leads by an entire display interval. Keep a half-display
-      // interval of look-ahead so the icon and camera still extrapolate,
-      // without pushing the first rendered jump a whole frame into the future.
-#ifdef GEODE_IS_IOS
-      double frameLead = std::max(frameDt * 0.5, 0.5 * quantum);
-#else
-      double frameLead = std::max(frameDt, 0.5 * quantum);
-#endif
-      double advance = m_extraDelta + frameLead;
+      // Predict to the upcoming display frame, not a fraction of it.
+      // Keep the render target identical for player physics and camera.
+      double advance = m_extraDelta + std::max(frameDt, 0.5 * quantum);
       if (!std::isfinite(advance) || advance < 0.0) {
         advance = 0.0;
       } else if (advance > kMaxPredictSeconds) {
